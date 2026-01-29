@@ -1,6 +1,37 @@
-# Broccoli ESP32 Cluster Python Client
+# Broccoli / Mini-ESP SuperSpaceCluster — Python Client
 
-Control your ESP32 cluster from Python/Jupyter without reflashing firmware.
+This folder is the **PC-side control plane**. It talks to the ESP32-S3 master over USB serial and lets you:
+- define tasks dynamically
+- execute tasks (optionally selecting core 0/1)
+- run Celery-like Canvas primitives (GROUP/CHAIN/CHORD)
+- run a comprehensive integration test suite against real hardware
+
+If you want the big-picture architecture and project status, start here:
+- `../../README.md`
+
+---
+
+## What this project is (so far)
+
+Think: “Celery, but the workers are ESP32s”.
+
+You send commands from the PC to a master MCU, the master forwards them to a worker MCU, and the worker runs the task runtime.
+
+High-level topology:
+
+```
+PC (Python/Jupyter)
+    |
+    |  USB Serial (line-delimited commands)
+    v
+ESP32-S3 MASTER (Arduino)
+    |
+    |  interconnect (UART / framing layer)
+    v
+ESP32-S3 WORKER (MicroPython)
+```
+
+---
 
 ## Installation
 
@@ -8,103 +39,128 @@ Control your ESP32 cluster from Python/Jupyter without reflashing firmware.
 pip install pyserial
 ```
 
-## Quick Start
+---
+
+## Quick start
 
 ```python
 from broccoli_cluster import BroccoliCluster
 
-# Connect to master node
-cluster = BroccoliCluster('COM23')  # Change to your port
-cluster.connect()
-
-# Define a task
-cluster.define_task('add', 'x + y')
-
-# Execute it
-result = cluster.execute('add', 5, 3)
-print(f"Result: {result}")  # Output: "8"
-
-# Disconnect
-cluster.disconnect()
+with BroccoliCluster("COM25") as cluster:  # change to your master port
+        cluster.define_task("add", "lambda a, b: a + b")
+        print(cluster.execute("add", 5, 3))
 ```
 
-## Using Context Manager
+Tip: the comprehensive test suite reads the port from an env var:
 
-```python
-with BroccoliCluster('COM23') as cluster:
-    cluster.define_task('multiply', 'x * y')
-    result = cluster.execute('multiply', 7, 6)
-    print(f"7 * 6 = {result}")
+```bash
+set BROCCOLI_PORT=COM25
 ```
 
-## Available Methods
+---
 
-### `define_task(name, code)`
-Define a new computational task.
+## Protocol (PC ↔ master)
 
-```python
-cluster.define_task('square', 'x * x')
-cluster.define_task('average', '(x + y) / 2')
-```
+The PC-facing protocol is intentionally simple: **one command per line**, **one response per line**.
 
-### `execute(task_name, *args, wait=True, timeout=5.0)`
-Execute a task on the cluster.
-
-```python
-# Wait for result (default)
-result = cluster.execute('add', 10, 20)
-
-# Don't wait (fire and forget)
-cluster.execute('compute_heavy', 100, wait=False)
-```
-
-### `list_tasks()`
-List all defined tasks.
-
-```python
-tasks = cluster.list_tasks()
-print(tasks)  # ['add', 'multiply', 'square']
-```
-
-### `stats()`
-Show SLIP communication statistics.
-
-```python
-cluster.stats()
-# Output:
-# Worker 1: TX=512 bytes (4 pkts), RX=320 bytes (6 pkts)
-```
-
-## Serial Protocol
-
-The master firmware accepts these commands over serial:
+Commands:
 
 | Command | Format | Example |
-|---------|--------|---------|
-| DEFINE | `DEFINE:task_name:code` | `DEFINE:add:x+y` |
-| EXEC | `EXEC:task_name:args` | `EXEC:add:5,3` |
-| LIST | `LIST` | `LIST` |
-| STATS | `STATS` | `STATS` |
+|---|---|---|
+| Define | `DEFINE:<task_name>:<code>` | `DEFINE:add:lambda a,b: a+b` |
+| Execute | `EXEC:<task_name>:<args>` | `EXEC:add:5,3` |
+| Execute w/ core | `EXEC:<task>:CORE:<0|1>:<args>` | `EXEC:square:CORE:1:100` |
+| List | `LIST` | `LIST` |
+| Canvas | `CANVAS:<TYPE>:<json>` | `CANVAS:GROUP:{...}` |
+| Stats | `STATS` | `STATS` |
+| Upload | `UPLOAD:<filename>:<content>` | `UPLOAD:test.py:def f():...` |
 
-Responses:
+Responses (typical):
 
 | Response | Format | Example |
-|----------|--------|---------|
-| Task defined | `OK:DEFINED:task_name` | `OK:DEFINED:add` |
-| Task submitted | `OK:SUBMITTED:task_id` | `OK:SUBMITTED:1` |
-| Task result | `RESULT:function:value` | `RESULT:add:8` |
-| Error | `ERROR:message` | `ERROR:TASK_NOT_DEFINED` |
+|---|---|---|
+| OK | `OK:<...>` | `OK:DEFINED:add` |
+| Submitted | `OK:SUBMITTED:<id>` | `OK:SUBMITTED:1` |
+| Result | `RESULT:<task>:<value>` | `RESULT:add:8` |
+| Error | `ERROR:<message>` | `ERROR:TASK_NOT_DEFINED` |
 
-## Jupyter Notebook
+---
 
-See [notebooks/cluster_control.ipynb](../../notebooks/cluster_control.ipynb) for a complete example.
+## Core features
 
-## Limitations
+### Dynamic tasks
 
-- Currently supports simple arithmetic expressions only
-- Worker firmware needs to be updated to support new operations
-- Single worker connection (can be extended to multiple workers)
+The worker stores the task code and evaluates it at runtime.
 
-## Extending Task Support
+```python
+cluster.define_task("square", "lambda x: x * x")
+print(cluster.execute("square", 9))
+```
 
-To add support for more complex operations (like trigonometry, string operations, etc.), modify the worker firmware in `src/main_worker.cpp` to handle additional function types.
+### Dual-core execution
+
+```python
+cluster.define_task("square", "lambda x: x * x")
+print(cluster.execute("square", 50, core=0))
+print(cluster.execute("square", 100, core=1))
+```
+
+### Canvas primitives
+
+```python
+cluster.define_task("add", "lambda a,b: a+b")
+cluster.define_task("multiply", "lambda a,b: a*b")
+cluster.define_task("square", "lambda x: x*x")
+
+print(cluster.group([
+        cluster.sig("add", 5, 3),
+        cluster.sig("multiply", 4, 7),
+        cluster.sig("square", 9),
+]))
+```
+
+---
+
+## Tests
+
+### Smoke test
+
+`test_direct.py` is the fastest “is the pipeline alive?” check.
+
+```bash
+python test_direct.py
+```
+
+### Comprehensive test suite (14 tests)
+
+`test_everything.py` runs end-to-end integration tests against real hardware.
+
+```bash
+python test_everything.py
+```
+
+What it covers:
+- Task definition/execution
+- GROUP/CHAIN/CHORD
+- Dual-core
+- Peripheral init (I2C/SPI/UART/CAN)
+- GPIO/PWM
+- ADC
+- System monitoring
+- Dynamic upload
+- Error handling
+- Task listing
+
+---
+
+## Known issues (practical)
+
+- **Hardware-dependent serial stability**: if you see corruption/timeouts, lower the interconnect baud and keep wiring short + common ground.
+- **Dynamic upload payloads**: large strings need more robust framing/escaping.
+- **Terminology mismatch**: some modules still use “SLIP” naming even though the PC-facing protocol is line-delimited text.
+
+---
+
+## Jupyter
+
+See `../../notebooks/cluster_control.ipynb` for interactive control.
