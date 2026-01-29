@@ -578,9 +578,7 @@ class BroccoliCluster:
             })
         
         cmd = f"CANVAS:CHAIN:{json.dumps(data)}"
-        print(f"[DEBUG] Sending CHAIN command: {cmd}")
         response = self._send_command(cmd, timeout=30.0)  # Canvas needs longer timeout
-        print(f"[DEBUG] Received response: {response}")
         
         if response and response.startswith("OK:"):
             try:
