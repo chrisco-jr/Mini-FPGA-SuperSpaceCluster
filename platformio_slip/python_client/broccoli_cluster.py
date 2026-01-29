@@ -68,10 +68,13 @@ class BroccoliCluster:
             self.connected = False
             print(">> Disconnected from cluster")
     
-    def _send_command(self, command: str) -> str:
+    def _send_command(self, command: str, timeout: float = None) -> str:
         """Send a command and return the response."""
         if not self.connected:
             raise RuntimeError("Not connected to cluster. Call connect() first.")
+        
+        if timeout is None:
+            timeout = self.timeout
         
         # Clear input buffer
         self.ser.reset_input_buffer()
@@ -85,7 +88,7 @@ class BroccoliCluster:
         response_lines = []
         
         timeout_start = time.time()
-        while time.time() - timeout_start < self.timeout:
+        while time.time() - timeout_start < timeout:
             if self.ser.in_waiting:
                 line = self.ser.readline().decode('utf-8', errors='ignore').strip()
                 if line:
@@ -553,8 +556,7 @@ class BroccoliCluster:
             })
         
         cmd = f"CANVAS:GROUP:{json.dumps(data)}"
-        self._send_command(cmd)
-        response = self._read_response(timeout=30.0)  # Canvas needs longer timeout
+        response = self._send_command(cmd, timeout=30.0)  # Canvas needs longer timeout
         
         if response and response.startswith("OK:"):
             try:
@@ -576,8 +578,7 @@ class BroccoliCluster:
             })
         
         cmd = f"CANVAS:CHAIN:{json.dumps(data)}"
-        self._send_command(cmd)
-        response = self._read_response(timeout=30.0)  # Canvas needs longer timeout
+        response = self._send_command(cmd, timeout=30.0)  # Canvas needs longer timeout
         
         if response and response.startswith("OK:"):
             try:
@@ -609,8 +610,7 @@ class BroccoliCluster:
         }
         
         cmd = f"CANVAS:CHORD:{json.dumps(data)}"
-        self._send_command(cmd)
-        response = self._read_response(timeout=30.0)  # Canvas needs longer timeout
+        response = self._send_command(cmd, timeout=30.0)  # Canvas needs longer timeout
         
         if response and response.startswith("OK:"):
             try:

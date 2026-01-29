@@ -117,7 +117,7 @@ def test_everything():
             cluster.define_task("sum_list", "lambda lst: sum(lst)")
             time.sleep(0.3)
             
-            print("\nExecuting chain: add(5,3) → multiply(2) → square()...")
+            print("\nExecuting chain: add(5,3) -> multiply(2) -> square()...")
             result = cluster.chain([
                 cluster.sig("add", 5, 3),      # 8
                 cluster.sig("multiply", 2),    # 16
@@ -143,7 +143,7 @@ def test_everything():
         # ============================================================
         print_section("TEST 5: Canvas Primitives - CHORD (Map-Reduce)")
         try:
-            print("\nExecuting chord: [square(2), square(3), square(4), square(5)] → sum_list()...")
+            print("\nExecuting chord: [square(2), square(3), square(4), square(5)] -> sum_list()...")
             result = cluster.chord(
                 header_sigs=[
                     cluster.sig("square", 2),   # 4
