@@ -124,8 +124,10 @@ def test_everything():
                 cluster.sig("square")          # 256
             ])
             print(f"Result: {result}")
+            print(f"Result type: {type(result)}")
             
             if result is None:
+                print("WARNING: CHAIN returned None - checking if feature is implemented")
                 raise Exception("CHAIN returned None - Canvas not implemented")
             
             result_int = int(result) if isinstance(result, str) else result

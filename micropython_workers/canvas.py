@@ -241,6 +241,15 @@ def create_canvas_api(task_executor):
                         
                         # Pass previous result as first arg
                         if result is not None:
+                            # Try to convert result to int/float if it's a number string
+                            try:
+                                if isinstance(result, str):
+                                    if '.' in result:
+                                        result = float(result)
+                                    else:
+                                        result = int(result)
+                            except (ValueError, TypeError):
+                                pass  # Keep as string if conversion fails
                             args = (result,) + args
                         
                         result_str = self.executor.execute_task(task_name, args, kwargs, core)
@@ -263,7 +272,17 @@ def create_canvas_api(task_executor):
                         result_str = self.executor.execute_task(task_name, args, kwargs, core)
                         # execute_task returns "OK:result" or "ERROR:msg"
                         if result_str.startswith("OK:"):
-                            header_results.append(result_str[3:])
+                            result = result_str[3:]
+                            # Try to convert to int/float
+                            try:
+                                if isinstance(result, str):
+                                    if '.' in result:
+                                        result = float(result)
+                                    else:
+                                        result = int(result)
+                            except (ValueError, TypeError):
+                                pass
+                            header_results.append(result)
                         else:
                             header_results.append(result_str)
                     
