@@ -213,18 +213,30 @@ class BroccoliCluster:
         Returns:
             List of task names
         """
-        response = self._send_command("LIST")
+        # Clear buffer first
+        self.ser.reset_input_buffer()
         
+        # Send LIST command
+        self.ser.write(b"LIST\n")
+        self.ser.flush()
+        time.sleep(0.2)
+        
+        # Read multi-line response
         tasks = []
         in_list = False
+        timeout_start = time.time()
         
-        for line in response.split('\n'):
-            if line == 'OK:TASKS:':
-                in_list = True
-            elif line == 'END':
-                break
-            elif in_list and line.strip():
-                tasks.append(line.strip())
+        while time.time() - timeout_start < 2.0:
+            if self.ser.in_waiting:
+                line = self.ser.readline().decode('utf-8', errors='ignore').strip()
+                if line == 'OK:TASKS:':
+                    in_list = True
+                elif line == 'END':
+                    break
+                elif in_list and line.strip():
+                    tasks.append(line.strip())
+            else:
+                time.sleep(0.01)
         
         return tasks
     
@@ -542,7 +554,7 @@ class BroccoliCluster:
         
         cmd = f"CANVAS:GROUP:{json.dumps(data)}"
         self._send_command(cmd)
-        response = self._read_response()
+        response = self._read_response(timeout=30.0)  # Canvas needs longer timeout
         
         if response and response.startswith("OK:"):
             try:
@@ -565,7 +577,7 @@ class BroccoliCluster:
         
         cmd = f"CANVAS:CHAIN:{json.dumps(data)}"
         self._send_command(cmd)
-        response = self._read_response()
+        response = self._read_response(timeout=30.0)  # Canvas needs longer timeout
         
         if response and response.startswith("OK:"):
             try:
@@ -598,7 +610,7 @@ class BroccoliCluster:
         
         cmd = f"CANVAS:CHORD:{json.dumps(data)}"
         self._send_command(cmd)
-        response = self._read_response()
+        response = self._read_response(timeout=30.0)  # Canvas needs longer timeout
         
         if response and response.startswith("OK:"):
             try:
