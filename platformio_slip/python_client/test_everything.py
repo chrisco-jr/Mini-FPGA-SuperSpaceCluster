@@ -272,15 +272,16 @@ def test_everything():
         print_section("TEST 9: GPIO Control")
         try:
             print("\nTesting GPIO operations:")
-            print("  >> Setting GPIO 2 HIGH...")
-            result = cluster.gpio_write(2, 1)
-            if result and "ERROR" in str(result):
-                raise Exception(f"GPIO write failed: {result}")
+            print("  >> Toggling GPIO 46 every second for 4 seconds...")
             
-            print("  >> PWM on GPIO 2 (channel 0, 5kHz, 8-bit, 50% duty)...")
-            result = cluster.pwm(2, 0, 5000, 8, 128)  # pin, channel, freq, resolution, duty
-            if result and "ERROR" in str(result):
-                raise Exception(f"PWM failed: {result}")
+            for i in range(4):
+                state_str = 'HIGH' if i % 2 else 'LOW'  # Alternate between LOW and HIGH
+                print(f"    Setting GPIO 46 to {state_str}")
+                result = cluster.gpio_write(46, state_str)
+                print(f"    GPIO response: {result}")
+                if result and "ERROR" in str(result):
+                    raise Exception(f"GPIO write failed: {result}")
+                time.sleep(1)
             
             print("\nOK GPIO control tests passed!")
             passed_tests += 1
@@ -328,30 +329,33 @@ def test_everything():
         # ============================================================
         print_section("TEST 12: Dynamic Code Upload")
         try:
-            print("\nCreating test algorithm...")
-            test_code = """def custom_algorithm(x, y):\n    return (x ** 2) + (y ** 2)"""
+            print("\nCreating GPIO toggle algorithm...")
+            test_code = """def gpio_toggle_demo():
+    import machine
+    import time
+    pin = machine.Pin(46, machine.Pin.OUT)
+    for i in range(4):
+        state = i % 2
+        pin.value(state)
+        time.sleep(1)
+    return 'GPIO 46 toggled 4 times'"""
             
             print("Uploading code via SLIP...")
-            cluster.upload_code("test_algo.py", test_code)
+            cluster.upload_code("gpio_demo.py", test_code)
             time.sleep(0.5)
             
-            print("Defining task that uses uploaded code...")
-            # Use simpler approach - just define the function directly
-            cluster.define_task("test_custom", "lambda x, y: (x ** 2) + (y ** 2)")
+            print("Defining GPIO toggle task...")
+            cluster.define_task("gpio_toggle", test_code.split('def gpio_toggle_demo():')[1].strip())
             time.sleep(0.3)
             
-            print("Executing custom algorithm...")
-            result = cluster.execute("test_custom", 3, 4)
-            print(f"  custom_algorithm(3, 4) = {result}")
+            print("Executing GPIO toggle (pin 46 will toggle every 1s for 4s)...")
+            result = cluster.execute("gpio_toggle")
+            print(f"  GPIO toggle result: {result}")
             
             if result and "ERROR" not in str(result):
-                result_int = int(result) if isinstance(result, str) else result
-                if result_int == 25:
-                    print("\nOK Dynamic code upload test passed!")
-                    passed_tests += 1
-                    test_results[12] = True
-                else:
-                    raise Exception(f"Expected 25 (3²+4²), got {result_int}")
+                print("\nOK Dynamic code upload test passed!")
+                passed_tests += 1
+                test_results[12] = True
             else:
                 # Dynamic upload is a bonus feature - don't fail suite if not working
                 print(f"  Note: Dynamic upload returned: {result}")

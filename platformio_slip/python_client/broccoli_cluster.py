@@ -271,8 +271,10 @@ class BroccoliCluster:
             state: 'HIGH' or 'LOW'
             core: Which core to run on (0 or 1, optional)
         """
-        self.define_task('GPIO_WRITE', state)
-        return self.execute('GPIO_WRITE', pin, state, core=core)
+        # Convert HIGH/LOW to 1/0 and use task-based approach like ADC
+        value = 1 if state.upper() == 'HIGH' else 0
+        self.define_task('GPIO_WRITE', f'lambda pin, val: Pin(pin, Pin.OUT).value(val) or f"GPIO{{pin}}={{val}}"')
+        return self.execute('GPIO_WRITE', pin, value, core=core)
     
     def gpio_read(self, pin: int, core: Optional[int] = None):
         """
