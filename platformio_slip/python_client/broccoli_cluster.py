@@ -387,13 +387,14 @@ class BroccoliCluster:
         self.define_task('SYS_INFO', 'sys')
         result = self.execute('SYS_INFO', wait=True)
         
-        # Parse result: "CHIP:ESP32-S3;CORES:2;FREQ:240MHz;SDK:v4.4"
+        # Parse result: "OK:platform=ESP32-S3;freq=240MHz;cores=2"
         info = {}
-        if result:
-            for pair in result.split(';'):
-                if ':' in pair:
-                    key, value = pair.split(':', 1)
-                    info[key.lower()] = value
+        if result and 'OK:' in str(result):
+            data = str(result).replace('OK:', '')
+            for pair in data.split(';'):
+                if '=' in pair:
+                    key, value = pair.split('=', 1)
+                    info[key] = value
         return info
     
     def get_ram_usage(self):
@@ -406,17 +407,20 @@ class BroccoliCluster:
         self.define_task('RAM_USAGE', 'ram')
         result = self.execute('RAM_USAGE', wait=True)
         
-        # Parse result: "TOTAL:320000;USED:45000;FREE:275000;MIN_FREE:250000;USAGE:14.1%"
+        # Parse result: "OK:total=320000;used=45000;free=320000;usage=14.1%"
         info = {}
-        if result:
-            for pair in result.split(';'):
-                if ':' in pair:
-                    key, value = pair.split(':', 1)
-                    key = key.lower()
+        if result and 'OK:' in str(result):
+            data = str(result).replace('OK:', '')
+            for pair in data.split(';'):
+                if '=' in pair:
+                    key, value = pair.split('=', 1)
                     if key == 'usage':
                         info[key] = value  # Keep percentage as string
                     else:
-                        info[key] = int(value)
+                        try:
+                            info[key] = int(value)
+                        except ValueError:
+                            info[key] = value
         return info
     
     def get_flash_usage(self):
@@ -426,20 +430,22 @@ class BroccoliCluster:
         Returns:
             Dictionary with total, sketch, free_sketch (bytes) and usage (%)
         """
-        self.define_task('FLASH_USAGE', 'flash')
-        result = self.execute('FLASH_USAGE', wait=True)
+        result = self._send_command('FLASH_USAGE', timeout=5.0)
         
-        # Parse result: "TOTAL:8388608;SKETCH:300000;FREE_SKETCH:2000000;USAGE:3.6%"
+        # Parse result: "OK:total=8388608;used=300000;free=8088608;usage=3.6%"
         info = {}
-        if result:
-            for pair in result.split(';'):
-                if ':' in pair:
-                    key, value = pair.split(':', 1)
-                    key = key.lower()
+        if result and result.startswith('OK:'):
+            data = result[3:]  # Remove "OK:" prefix
+            for pair in data.split(';'):
+                if '=' in pair:
+                    key, value = pair.split('=', 1)
                     if key == 'usage':
                         info[key] = value
                     else:
-                        info[key] = int(value)
+                        try:
+                            info[key] = int(value)
+                        except ValueError:
+                            info[key] = value
         return info
     
     def get_cpu_usage(self):
@@ -452,13 +458,13 @@ class BroccoliCluster:
         self.define_task('CPU_USAGE', 'cpu')
         result = self.execute('CPU_USAGE', wait=True)
         
-        # Parse result: "CORE0:45.2%;CORE1:23.1%;TOTAL_TIME:1234567"
+        # Parse result: "OK:core0=50%;core1=50%;note=estimated"
         info = {}
-        if result:
-            for pair in result.split(';'):
-                if ':' in pair:
-                    key, value = pair.split(':', 1)
-                    key = key.lower()
+        if result and 'OK:' in str(result):
+            data = str(result).replace('OK:', '')
+            for pair in data.split(';'):
+                if '=' in pair:
+                    key, value = pair.split('=', 1)
                     info[key] = value
         return info
     
@@ -472,17 +478,13 @@ class BroccoliCluster:
         self.define_task('TASK_LIST', 'tasks')
         result = self.execute('TASK_LIST', wait=True)
         
-        # Parse result: "TASKS:5;TaskName1(Core0,Prio1,Stack100);TaskName2(Core1,Prio2,Stack200);..."
+        # Parse result: "OK:threads=active;main=running"
         info = {'count': 0, 'tasks': []}
-        if result:
-            parts = result.split(';')
-            if parts[0].startswith('TASKS:'):
-                info['count'] = int(parts[0].split(':')[1])
-            
-            for i in range(1, len(parts)):
-                if '(' in parts[i]:
-                    info['tasks'].append(parts[i])
-        
+        if result and 'OK:' in str(result):
+            data = str(result).replace('OK:', '')
+            parts = data.split(';')
+            info['count'] = len(parts) if parts and parts[0] else 0
+            info['tasks'] = [f"{pair}" for pair in parts if pair] if parts else []
         return info
     
     def print_system_status(self):
@@ -496,10 +498,10 @@ class BroccoliCluster:
         # System Info
         sys_info = self.get_system_info()
         print("\n[System Information]")
-        print(f"  Chip: {sys_info.get('chip', 'Unknown')}")
+        print(f"  Platform: {sys_info.get('platform', 'Unknown')}")
         print(f"  Cores: {sys_info.get('cores', 'Unknown')}")
         print(f"  Frequency: {sys_info.get('freq', 'Unknown')}")
-        print(f"  SDK: {sys_info.get('sdk', 'Unknown')}")
+        print(f"  MicroPython: {sys_info.get('micropython', 'Unknown')}")
         
         # RAM Usage
         ram = self.get_ram_usage()
@@ -507,15 +509,14 @@ class BroccoliCluster:
         print(f"  Total:    {ram.get('total', 0):>10,} bytes")
         print(f"  Used:     {ram.get('used', 0):>10,} bytes")
         print(f"  Free:     {ram.get('free', 0):>10,} bytes")
-        print(f"  Min Free: {ram.get('min_free', 0):>10,} bytes")
         print(f"  Usage:    {ram.get('usage', '0%'):>10}")
         
         # Flash Usage
         flash = self.get_flash_usage()
         print("\n[Flash Memory (Non-Volatile)]")
         print(f"  Total:       {flash.get('total', 0):>10,} bytes")
-        print(f"  Sketch Size: {flash.get('sketch', 0):>10,} bytes")
-        print(f"  Free Sketch: {flash.get('free_sketch', 0):>10,} bytes")
+        print(f"  Used:        {flash.get('used', 0):>10,} bytes")
+        print(f"  Free:        {flash.get('free', 0):>10,} bytes")
         print(f"  Usage:       {flash.get('usage', '0%'):>10}")
         
         # CPU Usage

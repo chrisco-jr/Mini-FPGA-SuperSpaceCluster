@@ -4,7 +4,9 @@ import os
 import shutil
 
 baud_rate = 115200
-com_port = 'COM12'
+# Default COM port - change this to match your hardware
+# Windows: COM3, COM4, COM5, etc. | Linux/Mac: /dev/ttyUSB0, /dev/cu.usbserial, etc.
+com_port = 'COM3'  # Change to your ESP32's COM port
 
 def show_com_port():
     print('com_port', com_port)

@@ -72,3 +72,24 @@ class SLIPInterface:
             time.sleep_ms(10)
         
         return None
+
+
+class SLIPProtocol:
+    """High-level SLIP protocol wrapper for main program"""
+    
+    def __init__(self):
+        # Configure for UART pins 18/17 @ 921600 baud (TX=18, RX=17 for crossover with master)
+        self.slip = SLIPInterface(1, 18, 17, 921600)
+        print("[SLIPProtocol] Ready")
+    
+    def send_packet(self, data):
+        """Send packet"""
+        self.slip.send(data)
+    
+    def receive_packet(self):
+        """Receive packet (non-blocking)"""
+        return self.slip.receive()
+    
+    def receive_packet_blocking(self, timeout_ms=5000):
+        """Receive packet (blocking with timeout)"""
+        return self.slip.receive_blocking(timeout_ms)

@@ -7,9 +7,6 @@
 #include <map>
 #include <string>
 
-// Use hardware Serial0 for USB communication on ESP32-S3
-#define PC_Serial Serial0
-
 MQTTSlipBridge bridge;
 
 // Store task definitions and pending results

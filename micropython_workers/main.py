@@ -86,6 +86,9 @@ class WorkerNode:
         g['pwm_control'] = lambda pin, channel, freq, resolution, duty: PWM(Pin(pin), freq=freq, duty=duty)
         g['ram'] = lambda: self.monitor.get_ram_usage()
         g['flash'] = lambda: self.monitor.get_flash_usage()
+        g['sys'] = lambda: self.monitor.get_system_info()
+        g['cpu'] = lambda: self.monitor.get_cpu_usage()
+        g['tasks'] = lambda: self.monitor.get_task_list()
         
         print("[Worker] Global functions registered")
     
