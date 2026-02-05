@@ -21,22 +21,31 @@ void setup() {
     Serial.println("\n\n=================================");
     Serial.println("ESP32-S3 Broccoli Master Node");
     Serial.println("SLIP Network Configuration");
+    Serial.printf("NUM_WORKERS: %d\n", NUM_WORKERS);
     Serial.println("=================================");
     
     // Initialize MQTT-SLIP bridge
     bridge.begin();
     
-    // Initialize worker reset pin (HIGH = running, LOW = reset)
-    pinMode(WORKER_RESET_PIN, OUTPUT);
-    digitalWrite(WORKER_RESET_PIN, HIGH);  // Keep worker running
+    // Initialize worker reset pins (HIGH = running, LOW = reset)
+    pinMode(WORKER1_RESET_PIN, OUTPUT);
+    digitalWrite(WORKER1_RESET_PIN, HIGH);  // Keep worker 1 running
+    
+    #if NUM_WORKERS >= 2
+    pinMode(WORKER2_RESET_PIN, OUTPUT);
+    digitalWrite(WORKER2_RESET_PIN, HIGH);  // Keep worker 2 running
+    #endif
     
     Serial.println("\nMaster node ready!");
-    Serial.println("Waiting for worker connections...");
+    Serial.printf("Waiting for %d worker connection(s)...\n", NUM_WORKERS);
     Serial.println("\nCommands:");
-    Serial.println("  DEFINE:task_name:code  - Define new task");
-    Serial.println("  EXEC:task_name:args    - Execute task");
-    Serial.println("  LIST                   - List defined tasks");
-    Serial.println("  STATS                  - Show SLIP statistics");
+    Serial.println("  DEFINE:task_name:code        - Define task on worker 0 (legacy)");
+    Serial.println("  DEFINEW:worker:task_name:code - Define task on specific worker");
+    Serial.println("  EXEC:task_name:args          - Execute on worker 0 (legacy)");
+    Serial.println("  EXECW:worker:task_name:args  - Execute on specific worker");
+    Serial.println("  LIST                         - List defined tasks");
+    Serial.println("  STATS                        - Show SLIP statistics");
+    Serial.println("  SETUART:1/2                  - Switch active UART (legacy single-worker mode)");
 }
 
 void processSerialCommand() {
@@ -121,6 +130,103 @@ void processSerialCommand() {
                 }
             } else {
                 Serial.println("ERROR:INVALID_EXEC_FORMAT");
+            }
+        }
+        else if (cmd.startsWith("EXECW:")) {
+            // Format: EXECW:worker_id:task_name:args
+            // Example: EXECW:0:add:5,3 or EXECW:1:square:10
+            int firstColon = cmd.indexOf(':');
+            int secondColon = cmd.indexOf(':', firstColon + 1);
+            int thirdColon = cmd.indexOf(':', secondColon + 1);
+            
+            if (firstColon > 0 && secondColon > 0 && thirdColon > 0) {
+                int workerId = cmd.substring(firstColon + 1, secondColon).toInt();
+                String taskName = cmd.substring(secondColon + 1, thirdColon);
+                String args = cmd.substring(thirdColon + 1);
+                
+                if (workerId < 0 || workerId >= NUM_WORKERS) {
+                    Serial.printf("ERROR:INVALID_WORKER_ID:%d (must be 0-%d)\n", workerId, NUM_WORKERS - 1);
+                    return;
+                }
+                
+                SLIPInterface* slip = bridge.getWorkerInterface(workerId);
+                if (!slip) {
+                    Serial.printf("ERROR:WORKER_%d_UNAVAILABLE\n", workerId);
+                    return;
+                }
+                
+                // Forward EXEC command to specific worker
+                String workerCmd = "EXEC:" + taskName + ":" + args;
+                
+                if (slip->send((uint8_t*)workerCmd.c_str(), workerCmd.length())) {
+                    int taskId = nextTaskId++;
+                    Serial.printf("OK:SUBMITTED:%d:WORKER%d\n", taskId, workerId);
+                    Serial.flush();
+                    
+                    // Poll for response
+                    delay(100);
+                    uint8_t buffer[512];
+                    for (int attempt = 0; attempt < 100; attempt++) {
+                        int len = slip->receive(buffer, sizeof(buffer) - 1);
+                        if (len > 0) {
+                            buffer[len] = '\0';
+                            String response = String((char*)buffer);
+                            
+                            if (response.startsWith("OK:")) {
+                                String value = response.substring(3);
+                                Serial.printf("RESULT:%s:%s\n", taskName.c_str(), value.c_str());
+                            } else if (response.startsWith("ERROR:")) {
+                                Serial.printf("RESULT:%s:ERROR:%s\n", taskName.c_str(), response.substring(6).c_str());
+                            } else {
+                                Serial.println(response);
+                            }
+                            Serial.flush();
+                            break;
+                        }
+                        delay(10);
+                    }
+                } else {
+                    Serial.println("ERROR:SEND_FAILED");
+                }
+            } else {
+                Serial.println("ERROR:INVALID_EXECW_FORMAT");
+            }
+        }
+        else if (cmd.startsWith("DEFINEW:")) {
+            // Format: DEFINEW:worker_id:task_name:code
+            // Example: DEFINEW:0:add:lambda a,b: a+b
+            int firstColon = cmd.indexOf(':');
+            int secondColon = cmd.indexOf(':', firstColon + 1);
+            int thirdColon = cmd.indexOf(':', secondColon + 1);
+            
+            if (firstColon > 0 && secondColon > 0 && thirdColon > 0) {
+                int workerId = cmd.substring(firstColon + 1, secondColon).toInt();
+                String taskName = cmd.substring(secondColon + 1, thirdColon);
+                String taskCode = cmd.substring(thirdColon + 1);
+                
+                if (workerId < 0 || workerId >= NUM_WORKERS) {
+                    Serial.printf("ERROR:INVALID_WORKER_ID:%d (must be 0-%d)\n", workerId, NUM_WORKERS - 1);
+                    return;
+                }
+                
+                SLIPInterface* slip = bridge.getWorkerInterface(workerId);
+                if (!slip) {
+                    Serial.printf("ERROR:WORKER_%d_UNAVAILABLE\n", workerId);
+                    return;
+                }
+                
+                // Store task definition
+                taskDefinitions[taskName] = taskCode;
+                
+                // Forward DEFINE command to specific worker
+                String workerCmd = "DEFINE:" + taskName + ":" + taskCode;
+                if (slip->send((uint8_t*)workerCmd.c_str(), workerCmd.length())) {
+                    Serial.printf("OK:DEFINED:%s:WORKER%d\n", taskName.c_str(), workerId);
+                } else {
+                    Serial.println("ERROR:SEND_FAILED");
+                }
+            } else {
+                Serial.println("ERROR:INVALID_DEFINEW_FORMAT");
             }
         }
         else if (cmd == "LIST") {
@@ -218,15 +324,22 @@ void processSerialCommand() {
         }
         else if (cmd == "RESET") {
             // Hardware reset worker by toggling GPIO
-            Serial.println("OK:RESETTING_WORKER");
-            digitalWrite(WORKER_RESET_PIN, LOW);   // Pull EN pin LOW
+            Serial.println("OK:RESETTING_WORKERS");
+            digitalWrite(WORKER1_RESET_PIN, LOW);   // Pull EN pin LOW
+            #if NUM_WORKERS >= 2
+            digitalWrite(WORKER2_RESET_PIN, LOW);
+            #endif
             delay(200);                             // Hold for 200ms
-            digitalWrite(WORKER_RESET_PIN, HIGH);  // Release EN pin
-            Serial.println("OK:WORKER_RESET_COMPLETE");
+            digitalWrite(WORKER1_RESET_PIN, HIGH);  // Release EN pin
+            #if NUM_WORKERS >= 2
+            digitalWrite(WORKER2_RESET_PIN, HIGH);
+            #endif
+            Serial.println("OK:WORKERS_RESET_COMPLETE");
         }
         else if (cmd.startsWith("SETUART:")) {
             // Format: SETUART:1 or SETUART:2
-            // Dynamically switch between UART1 and UART2
+            // Legacy command - dynamically switch between UART1 and UART2 for worker 0
+            // Note: In 2-worker mode, use EXECW/DEFINEW instead
             int uartNum = cmd.substring(8).toInt();
             
             if (uartNum == 1 || uartNum == 2) {
@@ -235,19 +348,14 @@ void processSerialCommand() {
                 // Update UART pins based on selection
                 int txPin, rxPin, resetPin;
                 if (uartNum == 1) {
-                    txPin = 17;
-                    rxPin = 18;
-                    resetPin = 4;
+                    txPin = WORKER1_TX_PIN;
+                    rxPin = WORKER1_RX_PIN;
+                    resetPin = WORKER1_RESET_PIN;
                 } else {  // UART2
-                    txPin = 16;
-                    rxPin = 15;
-                    resetPin = 5;
+                    txPin = WORKER2_TX_PIN;
+                    rxPin = WORKER2_RX_PIN;
+                    resetPin = WORKER2_RESET_PIN;
                 }
-                
-                // Update reset pin
-                pinMode(WORKER_RESET_PIN, INPUT);  // Release old pin
-                pinMode(resetPin, OUTPUT);
-                digitalWrite(resetPin, HIGH);
                 
                 // Reinitialize the SLIP interface with new pins
                 bridge.switchUART(0, uartNum, rxPin, txPin);

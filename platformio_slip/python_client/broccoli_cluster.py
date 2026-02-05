@@ -11,7 +11,18 @@ Usage:
 import serial
 import time
 import re
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Tuple, Dict
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Sig:
+    """Task signature for multi-worker Canvas primitives."""
+    task: str
+    args: Tuple[Any, ...] = ()
+    kwargs: Dict[str, Any] = field(default_factory=dict)
+    worker: Optional[int] = None  # 0, 1, or None (auto)
+    core: Optional[int] = None     # 0, 1, or None (auto)
 
 
 class BroccoliCluster:
@@ -104,34 +115,41 @@ class BroccoliCluster:
         
         return '\n'.join(response_lines)
     
-    def define_task(self, name: str, code: str):
+    def define_task(self, name: str, code: str, worker: Optional[int] = None):
         """
         Define a new task on the cluster.
         
         Args:
             name: Task name (e.g., 'add', 'multiply')
             code: Python-like expression (e.g., 'x + y', 'x * y')
+            worker: Which worker to define on (0, 1, or None for worker 0)
         
         Example:
             cluster.define_task('add', 'x + y')
-            cluster.define_task('square', 'x * x')
+            cluster.define_task('square', 'x * x', worker=1)
         """
-        command = f"DEFINE:{name}:{code}"
+        if worker is None:
+            command = f"DEFINE:{name}:{code}"  # Legacy, defaults to worker 0
+        else:
+            command = f"DEFINEW:{worker}:{name}:{code}"
+        
         response = self._send_command(command)
         
         if response.startswith('OK:DEFINED:'):
-            print(f">> Task '{name}' defined")
+            worker_info = f" on Worker {worker}" if worker is not None else ""
+            print(f">> Task '{name}' defined{worker_info}")
         else:
             print(f"✗ Failed to define task: {response}")
             raise RuntimeError(f"Task definition failed: {response}")
     
-    def execute(self, task_name: str, *args, core: Optional[int] = None, wait: bool = True, timeout: float = 5.0) -> Optional[str]:
+    def execute(self, task_name: str, *args, worker: Optional[int] = None, core: Optional[int] = None, wait: bool = True, timeout: float = 5.0) -> Optional[str]:
         """
         Execute a task on the cluster.
         
         Args:
             task_name: Name of the task to execute
             *args: Task arguments (will be joined with commas)
+            worker: Which worker to run on (0, 1, or None for worker 0)
             core: Which core to run on (0 or 1). None = auto-assign
             wait: Whether to wait for result (default True)
             timeout: How long to wait for result in seconds
@@ -141,16 +159,24 @@ class BroccoliCluster:
         
         Example:
             result = cluster.execute('add', 5, 3)
-            result = cluster.execute('add', 10, 20, core=1)  # Run on Core 1
+            result = cluster.execute('add', 10, 20, worker=1, core=1)
         """
         # Format arguments as comma-separated string
-        args_str = ','.join(str(arg) for arg in args)
+        args_str = ','.join(str(arg) for arg in args) if args else ''
         
-        # Add core selection if specified (use separate colons for proper parsing)
-        if core is not None:
-            command = f"EXEC:{task_name}:CORE:{core}:{args_str}" if args_str else f"EXEC:{task_name}:CORE:{core}"
+        # Build command based on worker and core selection
+        if worker is not None:
+            # Use worker-specific command
+            if core is not None:
+                command = f"EXECW:{worker}:{task_name}:CORE:{core}:{args_str}"
+            else:
+                command = f"EXECW:{worker}:{task_name}:{args_str}"
         else:
-            command = f"EXEC:{task_name}:{args_str}"
+            # Legacy command (defaults to worker 0)
+            if core is not None:
+                command = f"EXEC:{task_name}:CORE:{core}:{args_str}" if args_str else f"EXEC:{task_name}:CORE:{core}"
+            else:
+                command = f"EXEC:{task_name}:{args_str}"
         
         response = self._send_command(command)
         
@@ -160,8 +186,9 @@ class BroccoliCluster:
         
         # Extract task ID
         task_id = response.split(':')[2]
-        core_info = f" on Core {core}" if core is not None else ""
-        print(f">> Task submitted{core_info} (ID: {task_id})")
+        worker_info = f" on Worker {worker}" if worker is not None else ""
+        core_info = f" Core {core}" if core is not None else ""
+        print(f">> Task submitted{worker_info}{core_info} (ID: {task_id})")
         
         if not wait:
             return None
@@ -534,93 +561,129 @@ class BroccoliCluster:
         print("="*60)
     
     # ============================================================
-    # CANVAS PRIMITIVES
+    # CANVAS PRIMITIVES - Multi-Worker Support
     # ============================================================
     
-    def sig(self, task, *args, core=None, **kwargs):
+    def sig(self, task: str, *args, worker: Optional[int] = None, core: Optional[int] = None, **kwargs) -> Sig:
         """Create a task signature for Canvas primitives."""
-        return {
-            "task": task,
-            "args": args,
-            "kwargs": kwargs,
-            "core": core
-        }
+        return Sig(
+            task=task,
+            args=args,
+            kwargs=kwargs,
+            worker=worker,
+            core=core
+        )
     
-    def group(self, signatures):
-        """Execute tasks in parallel and collect results."""
-        import json
-        data = []
+    def group(self, signatures: List[Sig]) -> List[Any]:
+        """
+        Execute tasks in parallel across multiple workers and collect results.
+        
+        Args:
+            signatures: List of Sig objects specifying tasks and target workers
+        
+        Returns:
+            List of results in the same order as signatures
+        
+        Example:
+            results = cluster.group([
+                cluster.sig("square", 10, worker=0),
+                cluster.sig("square", 20, worker=1)
+            ])
+            # Returns: [100, 400]
+        """
+        results = []
         for sig in signatures:
-            data.append({
-                "task": sig["task"],
-                "args": sig.get("args", []),
-                "kwargs": sig.get("kwargs", {}),
-                "core": sig.get("core")
-            })
-        
-        cmd = f"CANVAS:GROUP:{json.dumps(data)}"
-        response = self._send_command(cmd, timeout=30.0)  # Canvas needs longer timeout
-        
-        if response and response.startswith("OK:"):
-            try:
-                return json.loads(response[3:])
-            except:
-                return response[3:]
-        return None
+            result = self.execute(
+                sig.task,
+                *sig.args,
+                worker=sig.worker,
+                core=sig.core,
+                wait=True,
+                timeout=10.0
+            )
+            results.append(result)
+        return results
     
-    def chain(self, signatures):
-        """Execute tasks sequentially, passing result to next."""
-        import json
-        data = []
-        for sig in signatures:
-            data.append({
-                "task": sig["task"],
-                "args": sig.get("args", []),
-                "kwargs": sig.get("kwargs", {}),
-                "core": sig.get("core")
-            })
+    def chain(self, signatures: List[Sig]) -> Any:
+        """
+        Execute tasks sequentially, passing result to next task.
+        Can distribute across workers as specified in signatures.
         
-        cmd = f"CANVAS:CHAIN:{json.dumps(data)}"
-        response = self._send_command(cmd, timeout=30.0)  # Canvas needs longer timeout
+        Args:
+            signatures: List of Sig objects specifying pipeline
         
-        if response and response.startswith("OK:"):
-            try:
-                return json.loads(response[3:])
-            except:
-                return response[3:]
-        return None
+        Returns:
+            Final result after all tasks complete
+        
+        Example:
+            result = cluster.chain([
+                cluster.sig("square", 5, worker=0),   # 25
+                cluster.sig("double", worker=1),       # 50
+                cluster.sig("increment", worker=0)     # 51
+            ])
+        """
+        if not signatures:
+            return None
+        
+        # Execute first task
+        result = self.execute(
+            signatures[0].task,
+            *signatures[0].args,
+            worker=signatures[0].worker,
+            core=signatures[0].core,
+            wait=True,
+            timeout=10.0
+        )
+        
+        # Chain remaining tasks
+        for sig in signatures[1:]:
+            result = self.execute(
+                sig.task,
+                result,  # Pass previous result as first argument
+                *sig.args,
+                worker=sig.worker,
+                core=sig.core,
+                wait=True,
+                timeout=10.0
+            )
+        
+        return result
     
-    def chord(self, header_sigs, callback_sig):
-        """Execute tasks in parallel, then callback with results."""
+    def chord(self, header_sigs: List[Sig], callback_sig: Sig) -> Any:
+        """
+        Execute tasks in parallel (map), then reduce with callback.
+        
+        Args:
+            header_sigs: List of Sig objects for parallel execution (map phase)
+            callback_sig: Sig object for reduction (receives list of results)
+        
+        Returns:
+            Result from callback task
+        
+        Example:
+            # Map-reduce: square numbers across workers, then sum
+            total = cluster.chord(
+                [cluster.sig("square", i, worker=i%2) for i in range(10)],
+                cluster.sig("sum_list", worker=0)
+            )
+        """
+        # Execute header tasks in parallel
+        header_results = self.group(header_sigs)
+        
+        # Execute callback with collected results
+        # Note: We pass results as a single JSON-encoded list
         import json
-        header = []
-        for sig in header_sigs:
-            header.append({
-                "task": sig["task"],
-                "args": sig.get("args", []),
-                "kwargs": sig.get("kwargs", {}),
-                "core": sig.get("core")
-            })
+        result = self.execute(
+            callback_sig.task,
+            json.dumps(header_results),  # Pass as JSON string
+            *callback_sig.args,
+            worker=callback_sig.worker,
+            core=callback_sig.core,
+            wait=True,
+            timeout=10.0
+        )
         
-        data = {
-            "header": header,
-            "callback": {
-                "task": callback_sig["task"],
-                "args": callback_sig.get("args", []),
-                "kwargs": callback_sig.get("kwargs", {}),
-                "core": callback_sig.get("core")
-            }
-        }
-        
-        cmd = f"CANVAS:CHORD:{json.dumps(data)}"
-        response = self._send_command(cmd, timeout=30.0)  # Canvas needs longer timeout
-        
-        if response and response.startswith("OK:"):
-            try:
-                return json.loads(response[3:])
-            except:
-                return response[3:]
-        return None
+        return result
     
     # ============================================================
     # FILE UPLOAD

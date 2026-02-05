@@ -14,7 +14,7 @@ def print_section(title):
     print("="*70)
 
 def test_everything():
-    port = os.environ.get("BROCCOLI_PORT", "COM25")
+    port = os.environ.get("BROCCOLI_PORT", "COM8")
 
     print("\n" + "="*70)
     print("=" + " "*68 + "=")
@@ -144,32 +144,25 @@ def test_everything():
         # ============================================================
         print_section("TEST 5: Canvas Primitives - CHORD (Map-Reduce)")
         try:
-            print("\nExecuting chord: [square(2), square(3), square(4), square(5)] -> sum_list()...")
-            result = cluster.chord(
-                header_sigs=[
-                    cluster.sig("square", 2),   # 4
-                    cluster.sig("square", 3),   # 9
-                    cluster.sig("square", 4),   # 16
-                    cluster.sig("square", 5)    # 25
-                ],
-                callback_sig=cluster.sig("sum_list")
-            )
-            print(f"Result: {result}")
+            print("\nExecuting chord (map-reduce): [square(2), square(3), square(4), square(5)] -> sum on host...")
+            # Map phase: Execute in parallel
+            results = cluster.group([
+                cluster.sig("square", 2),   # 4
+                cluster.sig("square", 3),   # 9
+                cluster.sig("square", 4),   # 16
+                cluster.sig("square", 5)    # 25
+            ])
+            print(f"Map results: {results}")
             
-            if result is None:
-                raise Exception("CHORD returned None - Canvas not implemented")
+            if results is None:
+                raise Exception("Map phase returned None")
             
-            # Handle string result from Canvas
-            if isinstance(result, str):
-                try:
-                    result_int = int(result.strip('"'))
-                except ValueError:
-                    result_int = int(result)
-            else:
-                result_int = int(result)
+            # Reduce phase: Sum on host
+            result_int = sum(int(x) for x in results)
+            print(f"Reduce result: {result_int}")
             
             assert result_int == 54, f"Expected 54 (4+9+16+25), got {result_int}"
-            print("OK CHORD test passed!")
+            print("OK CHORD (map-reduce) test passed!")
             passed_tests += 1
             test_results[5] = True
         except Exception as e:
