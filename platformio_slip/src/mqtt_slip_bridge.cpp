@@ -166,3 +166,37 @@ SLIPInterface* MQTTSlipBridge::getWorkerInterface(uint8_t index) {
 #endif
     return nullptr;
 }
+
+void MQTTSlipBridge::switchUART(uint8_t workerIndex, uint8_t uartNum, int rxPin, int txPin) {
+#ifdef MASTER_NODE
+    if (workerIndex >= NUM_WORKERS) {
+        Serial.printf("ERROR: Worker index %d out of range\n", workerIndex);
+        return;
+    }
+    
+    Serial.printf("Switching worker %d to UART%d (RX=%d, TX=%d)...\n", 
+                  workerIndex, uartNum, rxPin, txPin);
+    
+    // Delete old SLIP interface
+    if (workers[workerIndex]) {
+        delete workers[workerIndex];
+        workers[workerIndex] = nullptr;
+    }
+    
+    // Select appropriate HardwareSerial based on UART number
+    if (uartNum == 1) {
+        serialPorts[workerIndex] = &Serial1;
+    } else if (uartNum == 2) {
+        serialPorts[workerIndex] = &Serial2;
+    } else {
+        Serial.printf("ERROR: Invalid UART number %d\n", uartNum);
+        return;
+    }
+    
+    // Create new SLIP interface with new pins
+    workers[workerIndex] = new SLIPInterface(serialPorts[workerIndex], rxPin, txPin);
+    workers[workerIndex]->begin(SLIP_BAUDRATE);
+    
+    Serial.printf("Worker %d switched to UART%d successfully\n", workerIndex, uartNum);
+#endif
+}

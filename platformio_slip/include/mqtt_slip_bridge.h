@@ -34,6 +34,9 @@ public:
     // Get SLIP interface for a worker
     SLIPInterface* getWorkerInterface(uint8_t index);
     
+    // Switch UART for a worker at runtime
+    void switchUART(uint8_t workerIndex, uint8_t uartNum, int rxPin, int txPin);
+    
 private:
     SLIPInterface* workers[NUM_WORKERS];
     HardwareSerial* serialPorts[NUM_WORKERS];

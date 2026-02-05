@@ -224,6 +224,40 @@ void processSerialCommand() {
             digitalWrite(WORKER_RESET_PIN, HIGH);  // Release EN pin
             Serial.println("OK:WORKER_RESET_COMPLETE");
         }
+        else if (cmd.startsWith("SETUART:")) {
+            // Format: SETUART:1 or SETUART:2
+            // Dynamically switch between UART1 and UART2
+            int uartNum = cmd.substring(8).toInt();
+            
+            if (uartNum == 1 || uartNum == 2) {
+                Serial.printf("OK:SWITCHING_TO_UART%d\n", uartNum);
+                
+                // Update UART pins based on selection
+                int txPin, rxPin, resetPin;
+                if (uartNum == 1) {
+                    txPin = 17;
+                    rxPin = 18;
+                    resetPin = 4;
+                } else {  // UART2
+                    txPin = 16;
+                    rxPin = 15;
+                    resetPin = 5;
+                }
+                
+                // Update reset pin
+                pinMode(WORKER_RESET_PIN, INPUT);  // Release old pin
+                pinMode(resetPin, OUTPUT);
+                digitalWrite(resetPin, HIGH);
+                
+                // Reinitialize the SLIP interface with new pins
+                bridge.switchUART(0, uartNum, rxPin, txPin);
+                
+                Serial.printf("OK:UART%d_ACTIVE (TX=%d, RX=%d, Reset=%d)\n", 
+                             uartNum, txPin, rxPin, resetPin);
+            } else {
+                Serial.println("ERROR:INVALID_UART_NUMBER (use 1 or 2)");
+            }
+        }
         else {
             Serial.println("ERROR:UNKNOWN_COMMAND");
         }

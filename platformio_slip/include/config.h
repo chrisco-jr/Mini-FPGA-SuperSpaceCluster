@@ -18,10 +18,10 @@
 
 // Master Node UART Pin Configuration
 #ifdef MASTER_NODE
-    // Worker 1 on UART1
-    #define WORKER1_TX_PIN 17
-    #define WORKER1_RX_PIN 18
-    #define WORKER1_UART_NUM 1
+    // Worker 1 on UART2 (testing UART2 instead of UART1)
+    #define WORKER1_TX_PIN 16  // Changed from 17 to test UART2
+    #define WORKER1_RX_PIN 15  // Changed from 18 to test UART2
+    #define WORKER1_UART_NUM 2  // Changed from 1 to test UART2
     
     // Worker 2 on UART2
     #define WORKER2_TX_PIN 16
@@ -29,7 +29,7 @@
     #define WORKER2_UART_NUM 2
     
     // Worker reset control pin (connect to worker EN pin)
-    #define WORKER_RESET_PIN 4  // Pull LOW to reset worker
+    #define WORKER_RESET_PIN 5  // Changed from 4 to match UART2
 #endif
 
 // Worker Node UART Pin Configuration
