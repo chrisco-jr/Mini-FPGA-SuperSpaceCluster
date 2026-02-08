@@ -401,8 +401,8 @@ def stats(numbers):
     }
 """
         
-        cluster.upload_code("math_utils.py", module_code)
-        result.log("Module uploaded successfully (worker 0)")
+        cluster.upload_code("math_utils.py", module_code, worker=0)
+        result.log("Module uploaded successfully")
         
         # Test fibonacci
         result.log("Testing fibonacci function...")
@@ -507,8 +507,8 @@ def disconnect():
     return True
 """
         
-        cluster.upload_code("wifi_utils.py", wifi_code)
-        result.log("WiFi module uploaded (worker 0)")
+        cluster.upload_code("wifi_utils.py", wifi_code, worker=0)
+        result.log("WiFi module uploaded")
         
         # Test WiFi scan
         result.log("Scanning for WiFi networks...")
@@ -608,8 +608,8 @@ def get_status():
     return {'running': server_running}
 """
         
-        cluster.upload_code("http_server.py", http_code)
-        result.log("HTTP server module uploaded (worker 0)")
+        cluster.upload_code("http_server.py", http_code, worker=0)
+        result.log("HTTP server module uploaded")
         
         # Start server
         result.log("Starting HTTP server on port 8080...")
@@ -676,8 +676,8 @@ def stop_service():
     return 'Service stopped'
 """
         
-        cluster.upload_code("counter_service.py", service_code)
-        result.log("Service module uploaded (worker 0)")
+        cluster.upload_code("counter_service.py", service_code, worker=0)
+        result.log("Service module uploaded")
         
         # Start service
         result.log("Starting counter service...")
@@ -749,8 +749,8 @@ def gpio_toggle(pin, times=3, delay_ms=500):
     return f'Toggled {times} times'
 """
         
-        cluster.upload_code("gpio_utils.py", gpio_code)
-        result.log("GPIO module uploaded (worker 0)")
+        cluster.upload_code("gpio_utils.py", gpio_code, worker=0)
+        result.log("GPIO module uploaded")
         
         # Test GPIO toggle
         result.log("Testing GPIO toggle on pin 46...")
@@ -800,8 +800,8 @@ def read_multiple(pin, count=10):
     return total / count
 """
         
-        cluster.upload_code("adc_utils.py", adc_code)
-        result.log("ADC module uploaded (worker 0)")
+        cluster.upload_code("adc_utils.py", adc_code, worker=0)
+        result.log("ADC module uploaded")
         
         # Read ADC
         result.log("Reading ADC from GPIO 34...")
@@ -864,8 +864,8 @@ def get_flash_info():
     }
 """
         
-        cluster.upload_code("system_mon.py", system_code)
-        result.log("System monitoring module uploaded (worker 0)")
+        cluster.upload_code("system_mon.py", system_code, worker=0)
+        result.log("System monitoring module uploaded")
         
         # Get memory info
         result.log("Checking memory...")
@@ -1048,8 +1048,8 @@ def read_all_sensors():
     return readings
 """
         
-        cluster.upload_code("sensor_system.py", sensor_code)
-        result.log("Sensor system uploaded (worker 0)")
+        cluster.upload_code("sensor_system.py", sensor_code, worker=0)
+        result.log("Sensor system uploaded")
         
         # Initialize sensors
         result.log("Initializing sensors...")
@@ -1139,11 +1139,9 @@ def analyze(preprocessed):
     }
 """
         
-        cluster.upload_code("preprocess.py", preprocess_code)
-        result.log("Preprocessing module uploaded (worker 0)")
-        # Note: analyze.py should be on worker 1, but upload_code only supports worker 0
-        # In production, manually upload to worker 1 or extend API
-        result.log("Note: Both modules uploaded to worker 0 (API limitation)")
+        cluster.upload_code("preprocess.py", preprocess_code, worker=0)
+        cluster.upload_code("analyze.py", analyze_code, worker=1)
+        result.log("Pipeline modules uploaded to both workers")
         
         # Define pipeline
         result.log("Setting up processing pipeline...")
@@ -1197,10 +1195,9 @@ def combine_results(inside_counts, total_samples):
     return pi_estimate
 """
         
-        cluster.upload_code("monte_carlo.py", monte_carlo_code)
-        result.log("Monte Carlo module uploaded (worker 0)")
-        # Note: Should upload to worker 1 too, but API limitation
-        result.log("Note: Module needs manual upload to worker 1 for full distribution")
+        cluster.upload_code("monte_carlo.py", monte_carlo_code, worker=0)
+        cluster.upload_code("monte_carlo.py", monte_carlo_code, worker=1)
+        result.log("Monte Carlo module uploaded to both workers")
         
         # Define tasks
         cluster.define_task("mc_pi", '''
@@ -1292,8 +1289,8 @@ def aggregate_stats(sensor_id):
     }
 """
         
-        cluster.upload_code("iot_gateway.py", gateway_code)
-        result.log("IoT gateway module uploaded (worker 0)")
+        cluster.upload_code("iot_gateway.py", gateway_code, worker=0)
+        result.log("IoT gateway module uploaded")
         
         # Define gateway tasks
         cluster.define_task("log", '''
@@ -1374,8 +1371,8 @@ def batch_infer(feature_list):
     return [model.predict(f) for f in feature_list]
 """
         
-        cluster.upload_code("ml_model.py", ml_code)
-        result.log("ML model uploaded (worker 0)")
+        cluster.upload_code("ml_model.py", ml_code, worker=0)
+        result.log("ML model uploaded")
         
         # Define inference task
         cluster.define_task("infer", '''
@@ -1515,11 +1512,10 @@ def get_status():
     return controller.get_states()
 """
         
-        # Upload to workers  
-        cluster.upload_code("sensor_ctrl.py", sensor_controller)
-        result.log("Sensor controller uploaded (worker 0)")
-        # Note: actuator_ctrl.py should be on worker 1, but API limitation
-        result.log("Note: Manual upload actuator_ctrl.py to worker 1 for full functionality")
+        # Upload to workers
+        cluster.upload_code("sensor_ctrl.py", sensor_controller, worker=0)
+        cluster.upload_code("actuator_ctrl.py", actuator_controller, worker=1)
+        result.log("Controllers uploaded to workers")
         
         # Initialize system
         result.log("Initializing smart home system...")

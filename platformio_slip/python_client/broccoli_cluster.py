@@ -236,39 +236,7 @@ class BroccoliCluster:
         
         return None
     
-    def list_tasks(self) -> List[str]:
-        """
-        List all defined tasks.
-        
-        Returns:
-            List of task names
-        """
-        # Clear buffer first
-        self.ser.reset_input_buffer()
-        
-        # Send LIST command
-        self.ser.write(b"LIST\n")
-        self.ser.flush()
-        time.sleep(0.2)
-        
-        # Read multi-line response
-        tasks = []
-        in_list = False
-        timeout_start = time.time()
-        
-        while time.time() - timeout_start < 2.0:
-            if self.ser.in_waiting:
-                line = self.ser.readline().decode('utf-8', errors='ignore').strip()
-                if line == 'OK:TASKS:':
-                    in_list = True
-                elif line == 'END':
-                    break
-                elif in_list and line.strip():
-                    tasks.append(line.strip())
-            else:
-                time.sleep(0.01)
-        
-        return tasks
+    # NOTE: list_tasks() moved to line 717 with worker parameter support
     
     def stats(self):
         """Print SLIP statistics."""
@@ -561,11 +529,27 @@ class BroccoliCluster:
         print("="*60)
     
     # ============================================================
-    # CANVAS PRIMITIVES - Multi-Worker Support
+    # ============================================================
+    # CANVAS PRIMITIVES - Multi-Worker Distribution
+    # ============================================================
+    # These methods (group, chain, chord) implement Celery-style task orchestration.
+    # They use EXECW commands internally to distribute work across multiple workers.
+    # 
+    # IMPORTANT: There is NO "CANVAS" command sent to the master node.
+    # Worker distribution is controlled via the 'worker=' parameter in Sig objects.
+    # Each sig() specifies which worker (0 or 1) should execute that task.
     # ============================================================
     
     def sig(self, task: str, *args, worker: Optional[int] = None, core: Optional[int] = None, **kwargs) -> Sig:
-        """Create a task signature for Canvas primitives."""
+        """Create a task signature for Canvas primitives.
+        
+        Args:
+            task: Task name to execute
+            args: Positional arguments
+            worker: Target worker (0, 1, or None=default to worker 0)
+            core: Target CPU core (0, 1, or None=any core)
+            kwargs: Additional keyword arguments
+        """
         return Sig(
             task=task,
             args=args,
@@ -689,17 +673,50 @@ class BroccoliCluster:
     # FILE UPLOAD
     # ============================================================
     
-    def upload_code(self, filename, code):
-        """Upload Python code file to worker via SLIP."""
-        # Encode file upload command
-        cmd = f"UPLOAD:{filename}:{code}"
+    def upload_code(self, filename: str, code: str, worker: Optional[int] = None) -> str:
+        """
+        Upload Python code file to worker via SLIP.
+        
+        Args:
+            filename: Name of file to create on worker
+            code: Python code content
+            worker: Which worker to upload to (0, 1, or None for worker 0)
+        
+        Returns:
+            Response from worker
+        
+        Example:
+            cluster.upload_code("utils.py", "def hello(): return 'world'")
+            cluster.upload_code("math_mod.py", "def add(a,b): return a+b", worker=1)
+        """
+        if worker is None:
+            cmd = f"UPLOAD:{filename}:{code}"
+        else:
+            cmd = f"UPLOADW:{worker}:{filename}:{code}"
+        
         self._send_command(cmd)
         response = self._read_response()
         return response
     
-    def list_tasks(self):
-        """List all defined tasks on the worker."""
-        self._send_command("LIST")
+    def list_tasks(self, worker: Optional[int] = None) -> List[str]:
+        """
+        List all defined tasks on a worker.
+        
+        Args:
+            worker: Which worker to query (0, 1, or None for worker 0)
+        
+        Returns:
+            List of task names
+        
+        Example:
+            tasks_w0 = cluster.list_tasks()
+            tasks_w1 = cluster.list_tasks(worker=1)
+        """
+        if worker is None:
+            self._send_command("LIST")
+        else:
+            self._send_command(f"LISTW:{worker}")
+        
         response = self._read_response()
         
         if response and response.startswith("OK:"):
