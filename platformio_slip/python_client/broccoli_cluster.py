@@ -379,7 +379,7 @@ class BroccoliCluster:
         Returns:
             Dictionary with system info
         """
-        self.define_task('SYS_INFO', 'sys')
+        self.define_task('SYS_INFO', 'lambda: sys()')
         result = self.execute('SYS_INFO', wait=True)
         
         # Parse result: "OK:platform=ESP32-S3;freq=240MHz;cores=2"
@@ -399,7 +399,7 @@ class BroccoliCluster:
         Returns:
             Dictionary with total, used, free, min_free (bytes) and usage (%)
         """
-        self.define_task('RAM_USAGE', 'ram')
+        self.define_task('RAM_USAGE', 'lambda: ram()')
         result = self.execute('RAM_USAGE', wait=True)
         
         # Parse result: "OK:total=320000;used=45000;free=320000;usage=14.1%"
@@ -425,7 +425,12 @@ class BroccoliCluster:
         Returns:
             Dictionary with total, sketch, free_sketch (bytes) and usage (%)
         """
-        result = self._send_command('FLASH_USAGE', timeout=5.0)
+        self.define_task('FLASH_USAGE', 'lambda: flash()')
+        result = self.execute('FLASH_USAGE', wait=True)
+        
+        if not result:
+            return {}
+        result = str(result)
         
         # Parse result: "OK:total=8388608;used=300000;free=8088608;usage=3.6%"
         info = {}
@@ -450,7 +455,7 @@ class BroccoliCluster:
         Returns:
             Dictionary with core0, core1 usage percentages
         """
-        self.define_task('CPU_USAGE', 'cpu')
+        self.define_task('CPU_USAGE', 'lambda: cpu()')
         result = self.execute('CPU_USAGE', wait=True)
         
         # Parse result: "OK:core0=50%;core1=50%;note=estimated"
@@ -470,7 +475,7 @@ class BroccoliCluster:
         Returns:
             Dictionary with task count and list of tasks
         """
-        self.define_task('TASK_LIST', 'tasks')
+        self.define_task('TASK_LIST', 'lambda: tasks()')
         result = self.execute('TASK_LIST', wait=True)
         
         # Parse result: "OK:threads=active;main=running"
