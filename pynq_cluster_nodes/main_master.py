@@ -30,6 +30,7 @@ class MasterNode:
             "\n[AVAILABLE COMMANDS]" +
             "\n" + "-" * 45 +
             "\n  STATS          - Active health (Ping/Pong/Loss)" +
+            "\n  SYS_INFO        - Detailed Hardware Telemetry (Zynq XADC)" +
             "\n  RESET_STATS    - Zero out TX/RX packet counters" +
             "\n  LIST           - List tasks defined on Worker 0" +
             "\n  DEFINE:[N]:[C] - Define task [N] with code [C]" +

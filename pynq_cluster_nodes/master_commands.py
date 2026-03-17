@@ -38,7 +38,10 @@ class CommandProcessor:
                     self.master.forward_to_worker(w_id, "LIST")
                 elif prefix == "UPLOADW" and len(parts) == 4:
                     self.master.forward_to_worker(int(parts[1]), f"UPLOAD:{parts[2]}:{parts[3]}")
-                
+                elif prefix == "SYS_INFOW":
+                    w_id = int(parts[1]) if len(parts) > 1 else 0
+                    self.master.forward_to_worker(w_id, "SYS_INFO")                
+
                 # --- Legacy Shortcuts ---
                 elif prefix == "DEFINE": self.dispatch(f"DEFINEW:0:{cmd[7:]}", output_stream)
                 elif prefix == "EXEC":   self.dispatch(f"EXECW:0:{cmd[5:]}", output_stream)
@@ -59,6 +62,9 @@ class CommandProcessor:
                     output_stream.write("OK:HELP_DISPLAYED\n")
                     output_stream.flush()
                 return
+            elif cmd == "SYS_INFO":
+                # Default to Worker 0
+                self.master.forward_to_worker(0, "SYS_INFO")
             else:
                 print("ERROR:UNKNOWN_COMMAND")
 
