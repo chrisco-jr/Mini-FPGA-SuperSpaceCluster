@@ -39,11 +39,25 @@ class WorkerProcessor:
 
             # --- System Monitoring ---
             elif command == "STATS":     return self.task_executor.get_stats()
-            elif command == "SYS_INFO":  return f"OK:uname={os.uname().sysname}"
-            elif command == "RAM_USAGE": return self._read_proc("/proc/meminfo")
-            elif command == "CPU_USAGE": return self._read_proc("/proc/loadavg")
-            elif command == "UPTIME":    return self._read_proc("/proc/uptime")
             elif command == "PING":      return "PONG"
+            elif command == "SYS_INFO":
+                try:
+                    import sys_mon
+                    # Grab the latest snapshots
+                    health = sys_mon.get_all_telemetry()
+                    info = health['info']
+        
+                    # Format: [Kernel] Temp | CPU% | RAM_Used/Total | Uptime
+                    report = (
+                        f"[{info['kernel']}] "
+                        f"TEMP:{health['cpu_temp']}C | "
+                        f"CPU:{health['cpu']}% | "
+                        f"RAM:{health['mem']['used_mb']}/{health['mem']['total_mb']}MB ({health['mem']['pct']}%) | "
+                        f"UP:{health['uptime']['formatted']}"
+                    )
+                    return f"OK:{report}"
+                except Exception as e:
+                    return f"ERROR:SysInfo_Failed_{e}"
 
             # --- File/System Operations ---
             elif command == "UPLOAD":
