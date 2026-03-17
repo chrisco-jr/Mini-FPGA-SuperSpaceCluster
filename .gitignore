@@ -1,0 +1,10 @@
+.ipynb_checkpoints
+__pycache__
+.idea
+upload
+
+# PlatformIO
+.pio/
+.vscode/
+
+
