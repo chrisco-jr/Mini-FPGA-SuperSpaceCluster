@@ -11,6 +11,7 @@ Usage:
 import serial
 import time
 import re
+import base64 #added to prevent newline characters
 from typing import Any, Optional, List, Tuple, Dict
 from dataclasses import dataclass, field
 
@@ -694,10 +695,13 @@ class BroccoliCluster:
             cluster.upload_code("utils.py", "def hello(): return 'world'")
             cluster.upload_code("math_mod.py", "def add(a,b): return a+b", worker=1)
         """
+        # Base64-encode so multiline code doesn't break line-based protocol
+        code_b64 = base64.b64encode(code.encode("utf-8")).decode("ascii")
+
         if worker is None:
-            cmd = f"UPLOAD:{filename}:{code}"
+            cmd = f"UPLOAD:{filename}:B64:{code_b64}"
         else:
-            cmd = f"UPLOADW:{worker}:{filename}:{code}"
+            cmd = f"UPLOADW:{worker}:{filename}:B64:{code_b64}"
         
         self._send_command(cmd)
         response = self._read_response()
