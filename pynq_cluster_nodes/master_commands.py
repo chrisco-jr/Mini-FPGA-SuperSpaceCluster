@@ -41,11 +41,20 @@ class CommandProcessor:
                 elif prefix == "SYS_INFOW":
                     w_id = int(parts[1]) if len(parts) > 1 else 0
                     self.master.forward_to_worker(w_id, "SYS_INFO")                
+                elif prefix == "DELETEW" and len(parts) >= 3:
+                    w_id = int(parts[1])
+                    task_name = parts[2]
+                    self.master.forward_to_worker(w_id, f"DELETE:{task_name}")
+                elif prefix == "CLEARW" and len(parts) >= 2: 
+                    w_id = int(parts[1]) # Forwards "CLEAR" to the worker 
+                    self.master.forward_to_worker(w_id, "CLEAR")
 
                 # --- Legacy Shortcuts ---
                 elif prefix == "DEFINE": self.dispatch(f"DEFINEW:0:{cmd[7:]}", output_stream)
                 elif prefix == "EXEC":   self.dispatch(f"EXECW:0:{cmd[5:]}", output_stream)
                 elif prefix == "UPLOAD": self.dispatch(f"UPLOADW:0:{cmd[7:]}", output_stream)
+                elif prefix == "DELETE": self.dispatch(f"DELETEW:0:{cmd[7:]}", output_stream)
+                elif prefix == "CLEAR":  self.dispatch(f"CLEARW:0:{cmd[6:]}", output_stream)
                 else: print(f"ERROR:UNKNOWN_PREFIX:{prefix}")
             
             # --- Utility Commands ---

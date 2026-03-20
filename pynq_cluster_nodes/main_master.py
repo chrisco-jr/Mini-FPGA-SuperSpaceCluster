@@ -5,6 +5,7 @@ import sys
 import time
 from slip_protocol_linux import SLIPProtocol
 from master_commands import CommandProcessor
+from datetime import datetime
 
 class MasterNode:
     def __init__(self, worker_configs):
@@ -22,19 +23,22 @@ class MasterNode:
         self.next_task_id = 1
 
     def show_welcome_screen(self):
+        now = datetime.now()
         menu = (
             "\n" + "="*45 +
             "\n  PYNQ-Z2 BROCCOLI CLUSTER MASTER NODE" +
-            "\n  System Date: 2026-03-15 | Status: READY" +
+            "\n  System Date/Time : {now.strftime('%Y-%m-%d %H:%M:%S')} | Status: READY" +
             "\n" + "="*45 +
             "\n[AVAILABLE COMMANDS]" +
             "\n" + "-" * 45 +
             "\n  STATS          - Active health (Ping/Pong/Loss)" +
-            "\n  SYS_INFO        - Detailed Hardware Telemetry (Zynq XADC)" +
+            "\n  SYS_INFO       - Detailed Hardware Telemetry (Zynq XADC)" +
             "\n  RESET_STATS    - Zero out TX/RX packet counters" +
             "\n  LIST           - List tasks defined on Worker 0" +
             "\n  DEFINE:[N]:[C] - Define task [N] with code [C]" +
             "\n  EXEC:[N]:[A]   - Execute task [N] with args [A]" +
+            "\n  DELETE:[N]     - Delete task [N] from Task List" +
+            "\n  CLEAR          - Delete all tasks from from Task List" +
             "\n  HELP           - Show this menu" +
             "\n" + "-" * 45 +
             "\n  * Use prefix 'W' (e.g., LISTW:1) for specific workers" +

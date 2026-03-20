@@ -54,6 +54,7 @@ class WorkerProcessor:
                         f"CPU:{health['cpu']}% | "
                         f"RAM:{health['mem']['used_mb']}/{health['mem']['total_mb']}MB ({health['mem']['pct']}%) | "
                         f"UP:{health['uptime']['formatted']}"
+                        f"DATE:{health['sys_time']['date']} | TIME:{health['sys_time']['time']}"
                     )
                     return f"OK:{report}"
                 except Exception as e:
@@ -65,6 +66,13 @@ class WorkerProcessor:
             elif command == "RESET":
                 os.system("reboot")
                 return "OK:RESETTING"
+            elif command == "DELETE": # params will just be the task_name (e.g., "my_task") 
+                if not params: return "ERROR:Missing_Task_Name" 
+                return self.task_executor.registry.delete_task(params.strip()) # Calls on self.registry.delete_task()
+            elif command == "CLEAR": # Calls on self.registry.clear_all() 
+                return self.task_executor.registry.clear_all()
+
+
 
             return f"ERROR:Unknown_command_{command}"
 

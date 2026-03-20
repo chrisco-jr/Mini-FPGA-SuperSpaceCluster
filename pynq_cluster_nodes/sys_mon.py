@@ -1,6 +1,7 @@
 import os
 import time
 import platform
+from datetime import datetime
 
 # ============================================================
 # SYSTEM IDENTITY
@@ -16,6 +17,17 @@ def get_system_info():
         }
     except:
         return {"error": "Could not retrieve system info"}
+
+def get_system_time():
+    """Returns the date and time recorded on the target board"""
+    try:
+        now = datetime.now()
+        return {
+            "date": now.strftime('%Y-%m-%d'),
+            "time": now.strftime('%H_%M_%S')
+        }
+    except: 
+        return {"error": "Could not retrieve system time"}
 
 # ============================================================
 # HARDWARE HEALTH
@@ -111,5 +123,6 @@ def get_all_telemetry():
         "cpu": get_cpu_usage(),
         "mem": get_mem_info(),
         "uptime": get_uptime(),
-        "storage": get_storage_info()
+        "storage": get_storage_info(),
+        "sys_time": get_system_time()
     }
