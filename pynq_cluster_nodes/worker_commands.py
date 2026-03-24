@@ -2,6 +2,7 @@
 import json
 import os
 import time
+import base64
 
 class WorkerProcessor:
     def __init__(self, task_executor, canvas, dual_core):
@@ -141,11 +142,24 @@ class WorkerProcessor:
         return f"OK:{json.dumps(result)}" if status == "success" else f"ERROR:{result}"
 
     def _handle_upload(self, params):
+        # Split filename from the encoded data
         parts = params.split(':', 1)
-        if len(parts) != 2: return "ERROR:Format"
-        filename, content = parts
-        with open(filename, 'w') as f: f.write(content)
-        return f"OK:Uploaded_{filename}"
+        if len(parts) != 2: 
+            return "ERROR:Format"
+        
+        filename, encoded_content = parts
+        
+        try:
+            # 1. Decode the Base64 string back into raw bytes
+            decoded_bytes = base64.b64decode(encoded_content)
+            
+            # 2. Write as binary to preserve exact formatting/special characters
+            with open(filename, 'wb') as f: 
+                f.write(decoded_bytes)
+                
+            return f"OK:Uploaded_{filename}"
+        except Exception as e:
+            return f"ERROR:Upload_Failed_{str(e)}"
 
     def _read_proc(self, path):
         with open(path) as f: return f"OK:{f.read().strip()}"
