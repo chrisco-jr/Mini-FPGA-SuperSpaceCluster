@@ -365,7 +365,12 @@ class BroccoliCluster:
         # 3. Final sweep for any metadata or non-file tasks
         self._send_raw(f"CLEARW:{worker}")
 
-        return f"OK:Worker_{worker}_Task_Registry_Clear_complete"
+        tasks = self.list_tasks(worker=worker)
+        
+        if tasks is None:
+            return f"OK:Worker_{worker}_Task_Registry_Clear_complete"
+        else:
+            return f"ERROR:TASK_REMOVAL_FAILED"
 
     # ============================================================
     # UTILITY & TELEMETRY
@@ -391,6 +396,10 @@ class BroccoliCluster:
         response = self._send_raw("RESET_STATS")
         print(">> Cluster statistics have been zeroed out.")
         return response
+    
+    def get_system_info(self):
+        """ Grab local system information and telemetry from the board """
+        return self._send_raw("SYS_INFO")
 
     def help(self):
         """
