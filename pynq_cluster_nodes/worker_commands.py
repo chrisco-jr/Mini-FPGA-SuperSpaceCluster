@@ -3,136 +3,122 @@ import json
 import os
 import time
 import base64
+import sys
 
 class WorkerProcessor:
     def __init__(self, task_executor, canvas, dual_core):
         self.task_executor = task_executor
         self.canvas = canvas
         self.dual_core = dual_core
+        
+        # The Registry: Maps Master commands to local handler methods
+        self.handlers = {
+            "DEFINE":    self._handle_define,
+            "EXEC":      self._handle_exec,
+            "GET_RES":   self._handle_get_res,
+            "LIST":      self._handle_list,
+            "TASK_LIST": self._handle_list,
+            "CANVAS":    self._handle_canvas,
+            "STATS":     self._handle_stats,
+            "PING":      lambda p: "PONG",
+            "SYS_INFO":  self._handle_sys_info,
+            "UPLOAD":    self._handle_upload,
+            "DELETE":    self._handle_delete,
+            "CLEAR":     self._handle_clear,
+            "RESET":     self._handle_reset
+        }
 
     def dispatch(self, message):
         """Primary entry point for messages from Master"""
         if not message: return None
         
-        if ':' in message:
-            command, params = message.split(':', 1)
-        else:
-            command, params = message, ""
+        # Split command from parameters
+        parts = message.split(':', 1)
+        command = parts[0].strip()
+        params = parts[1].strip() if len(parts) > 1 else ""
             
-        return self.handle_command(command.strip(), params.strip())
+        handler = self.handlers.get(command)
+        if handler:
+            try:
+                return handler(params)
+            except Exception as e:
+                return f"ERROR:Handler_{command}_{str(e)[:50]}"
+        return f"ERROR:Unknown_command_{command}"
 
-    def handle_command(self, command, params):
-        try:
-            # --- Task Management ---
-            if command == "DEFINE":
-                parts = params.split(':', 1)
-                return self.task_executor.define_task(parts[0], parts[1]) if len(parts) == 2 else "ERROR:Format"
+    # --- Command Handlers ---
 
-            elif command == "EXEC":
-                return self._handle_exec(params)
-
-            elif command == "LIST" or command == "TASK_LIST":
-                return self.task_executor.list_tasks()
-
-            # --- Canvas Primitives ---
-            elif command == "CANVAS":
-                return self._handle_canvas(params)
-
-            # --- System Monitoring ---
-            elif command == "STATS":     return self.task_executor.get_stats()
-            elif command == "PING":      return "PONG"
-            elif command == "SYS_INFO":
-                try:
-                    import sys_mon
-                    # Grab the latest snapshots
-                    health = sys_mon.get_all_telemetry()
-                    info = health['info']
+    def _handle_define(self, params):
+        parts = params.split(':', 1)
+        if len(parts) != 2: return "ERROR:Format_Name:Code"
+        name, code = parts[0], parts[1]
         
-                    # Format: [Kernel] Temp | CPU% | RAM_Used/Total | Uptime
-                    report = (
-                        f"[{info['kernel']}] "
-                        f"TEMP:{health['cpu_temp']}C | "
-                        f"CPU:{health['cpu']}% | "
-                        f"RAM:{health['mem']['used_mb']}/{health['mem']['total_mb']}MB ({health['mem']['pct']}%) | "
-                        f"UP:{health['uptime']['formatted']}"
-                        f"DATE:{health['sys_time']['date']} | TIME:{health['sys_time']['time']}"
-                    )
-                    return f"OK:{report}"
-                except Exception as e:
-                    return f"ERROR:SysInfo_Failed_{e}"
+        # Strip potential wrapping quotes that come from Serial/Master
+        code = code.strip("'\"")
+        
+        # If the code looks like a lambda, we ensure the executor 
+        # treats it as a function object, not a string.
+        return self.task_executor.define_task(name, code)
+        
 
-            # --- File/System Operations ---
-            elif command == "UPLOAD":
-                return self._handle_upload(params)
-            elif command == "RESET":
-                os.system("reboot")
-                return "OK:RESETTING"
-            elif command == "DELETE": # params will just be the task_name (e.g., "my_task") 
-                if not params: return "ERROR:Missing_Task_Name" 
-                return self.task_executor.registry.delete_task(params.strip()) # Calls on self.registry.delete_task()
-            elif command == "CLEAR": # Calls on self.registry.clear_all() 
-                return self.task_executor.registry.clear_all()
-
-
-
-            return f"ERROR:Unknown_command_{command}"
-
-        except Exception as e:
-            return f"ERROR:Processor_{e}"
-
-    # --- Internal Helper Methods (Keep logic clean) ---
     def _handle_exec(self, params):
+        """
+        Handles execution and returns a TASK_ID immediately.
+        Format: task_name:args OR task_name:CORE:0:args
+        """
         try:
             parts = params.split(':')
             task_name = parts[0]
             core = None
             args_str = ""
 
-            # 1. Routing & Argument Extraction
-            # Format: EXEC:task_name:CORE:0:arg1,arg2
+            # Routing to specific ARM Core
             if len(parts) > 1:
-                if parts[1] == "CORE" and len(parts) > 2:
+                if parts[1] == "CORE" and len(parts) > 3:
                     core = int(parts[2])
-                    args_str = parts[3] if len(parts) > 3 else ""
+                    args_str = parts[3]
                 else:
-                    # Format: EXEC:task_name:arg1,arg2
                     args_str = parts[1]
 
-            # 2. Argument Parsing (Safe conversion)
+            # Parse arguments (int, float, or string)
             args = []
             if args_str:
-                # Split by comma and attempt to convert to numeric types
                 for a in args_str.split(','):
                     a = a.strip()
                     try:
-                        # Convert to int or float if possible
-                        if '.' in a:
-                            args.append(float(a))
-                        else:
-                            args.append(int(a))
+                        args.append(float(a) if '.' in a else int(a))
                     except ValueError:
-                        # Keep as string if it's not a number
                         args.append(a.strip("'\""))
 
-            # 3. Execution
-            # Ensure we pass a tuple: tuple(args)
-            result = self.task_executor.execute_task(task_name, tuple(args), {}, core)
+            # INTEGRATION: execute() now returns a Task ID for the SDK to poll
+            # status will be 'OK:SUBMITTED', result will be the ID
+            status, result = self.task_executor.execute(task_name, *args, core=core)
             
-            # Redundant check to prevent multiple prefixes
-            str_res = str(result)
-            # 1. If it's already an error, just pass it through
-            if str_res.startswith("ERROR:"):
-                return str_res
-            
-            # 2. If it's already an "OK:", don't add another one
-            if str_res.startswith("OK:"):
-                return str_res
-            
-            # 3. If it's a raw value (like 42), add the OK:
-            return f"OK:{str_res}"
-
+            if status == 'success':
+                return f"OK:SUBMITTED:{result}"
+            else:
+                return f"ERROR:{result}"
         except Exception as e:
-            return f"ERROR:Exec_Handler_{e}"
+            return f"ERROR:Exec_Fault_{str(e)}"
+
+    def _handle_get_res(self, params):
+        """Used by the SDK to poll for a result using a Task ID"""
+        if not params: return "ERROR:Missing_ID"
+    
+        status, result = self.task_executor.get_result(params)
+        
+        if status.upper() == 'SUCCESS':
+            # FIX: Explicitly cast to string to avoid any remaining 
+            # object representation issues
+            return f"OK:RESULT:{str(result)}"
+        
+        # Handle the 'WAIT' state for the SDK
+        if status.upper() == 'WAIT' or status.upper() == 'PENDING':
+            return "WAIT:TASK_STILL_RUNNING"
+            
+        return f"ERROR:{result}"
+
+    def _handle_list(self, params):
+        return self.task_executor.list_tasks()
 
     def _handle_canvas(self, params):
         parts = params.split(':', 1)
@@ -141,25 +127,50 @@ class WorkerProcessor:
         status, result = self.canvas.execute_primitive(p_type, json.loads(data_json))
         return f"OK:{json.dumps(result)}" if status == "success" else f"ERROR:{result}"
 
-    def _handle_upload(self, params):
-        # Split filename from the encoded data
-        parts = params.split(':', 1)
-        if len(parts) != 2: 
-            return "ERROR:Format"
-        
-        filename, encoded_content = parts
-        
+    def _handle_stats(self, params):
+        return self.task_executor.get_stats()
+
+    def _handle_sys_info(self, params):
+        """Zynq XADC and PetaLinux Health Telemetry"""
         try:
-            # 1. Decode the Base64 string back into raw bytes
-            decoded_bytes = base64.b64decode(encoded_content)
+            import sys_mon # Assumes your sys_mon.py is in the path
+            health = sys_mon.get_all_telemetry()
+            info = health['info']
             
-            # 2. Write as binary to preserve exact formatting/special characters
+            # Formatted for the Master Node's terminal display
+            report = (
+                f"[{info['kernel']}] "
+                f"TEMP:{health['cpu_temp']}C | "
+                f"CPU:{health['cpu']}% | "
+                f"RAM:{health['mem']['used_mb']}/{health['mem']['total_mb']}MB | "
+                f"UP:{health['uptime']['formatted']}"
+            )
+            return f"OK:{report}"
+        except Exception as e:
+            # Fallback if sys_mon isn't available
+            return f"OK:Zynq_ARM_Active_UP:{int(time.clock_gettime(time.CLOCK_BOOTTIME))}s"
+
+    def _handle_upload(self, params):
+        parts = params.split(':', 1)
+        if len(parts) != 2: return "ERROR:Format"
+        filename, encoded_content = parts
+        try:
+            decoded_bytes = base64.b64decode(encoded_content)
             with open(filename, 'wb') as f: 
                 f.write(decoded_bytes)
-                
             return f"OK:Uploaded_{filename}"
         except Exception as e:
             return f"ERROR:Upload_Failed_{str(e)}"
 
-    def _read_proc(self, path):
-        with open(path) as f: return f"OK:{f.read().strip()}"
+    def _handle_delete(self, params):
+        if not params: return "ERROR:Missing_Task_Name" 
+        return self.task_executor.registry.delete_task(params.strip())
+
+    def _handle_clear(self, params):
+        return self.task_executor.registry.clear_all()
+
+    def _handle_reset(self, params):
+        # Safety flush before reboot
+        sys.stdout.flush()
+        os.system("reboot")
+        return "OK:RESETTING"
