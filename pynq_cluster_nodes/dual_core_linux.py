@@ -43,14 +43,34 @@ class DualCoreExecutor:
             if task:
                 task_id, func, args, kwargs = task
                 try:
+                    # 1. Primary Execution
                     result = func(*args, **kwargs)
+
+                    # 2. THE FIX: Recursive Resolution
+                    # If the result is still a function/method (and not a class type),
+                    # call it again. This handles complex getattr/importlib wrappers.
+                    # We use a loop in case there are multiple layers of wrapping.
+                    max_depth = 5
+                    while callable(result) and not isinstance(result, type) and max_depth > 0:
+                        # If it's a zero-arg wrapper, call it. 
+                        # If it needs the same args again, we pass them.
+                        try:
+                            result = result()
+                        except TypeError:
+                            result = result(*args, **kwargs)
+                        max_depth -= 1
+
+                    # 3. Store the final "unwrapped" value
                     with self.lock:
                         self.results[task_id] = ('success', result)
+                        
                 except Exception as e:
                     with self.lock:
-                        self.results[task_id] = ('error', str(e))
+                        # Provide more context in the error if execution fails
+                        self.results[task_id] = ('error', f"ExecError: {str(e)}")
             else:
-                time.sleep(0.01)
+                # High-frequency polling for the Zynq's ARM cores
+                time.sleep(0.001)
 
     # ---------------------------------------------------------
     # Synchronous Execution

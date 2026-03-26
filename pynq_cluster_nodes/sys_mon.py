@@ -1,6 +1,7 @@
 import os
 import time
 import platform
+from datetime import datetime
 
 # ============================================================
 # SYSTEM IDENTITY
@@ -16,6 +17,17 @@ def get_system_info():
         }
     except:
         return {"error": "Could not retrieve system info"}
+
+def get_system_time():
+    """Returns the date and time recorded on the target board"""
+    try:
+        now = datetime.now()
+        return {
+            "date": now.strftime('%Y-%m-%d'),
+            "time": now.strftime('%H_%M_%S')
+        }
+    except: 
+        return {"error": "Could not retrieve system time"}
 
 # ============================================================
 # HARDWARE HEALTH
@@ -62,6 +74,43 @@ def get_mem_info():
     except:
         return {"used_mb": 0, "total_mb": 0, "pct": 0}
 
+def get_uptime():
+    """Reads system uptime in seconds from /proc/uptime."""
+    try:
+        with open("/proc/uptime", "r") as f:
+            uptime_seconds = float(f.readline().split()[0])
+            
+        # Optional: Return as a dictionary with formatted string
+        # Useful for quick checks on the Master side
+        m, s = divmod(int(uptime_seconds), 60)
+        h, m = divmod(m, 60)
+        d, h = divmod(h, 24)
+        
+        return {
+            "seconds": round(uptime_seconds, 1),
+            "formatted": f"{d}d {h}h {m}m {s}s"
+        }
+    except:
+        return {"seconds": 0.0, "formatted": "unknown"}
+
+def get_storage_info(path="/"):
+    """Returns disk usage statistics in GB and percentage."""
+    try:
+        st = os.statvfs(path)
+        # Block size * total blocks
+        total = (st.f_blocks * st.f_frsize)
+        # Block size * free blocks available to user
+        free = (st.f_bavail * st.f_frsize)
+        used = total - free
+        
+        return {
+            "used_gb": round(used / (1024**3), 2),
+            "total_gb": round(total / (1024**3), 2),
+            "pct": round((used / total) * 100, 1)
+        }
+    except:
+        return {"used_gb": 0, "total_gb": 0, "pct": 0}
+
 # ============================================================
 # AGGREGATE (Optional)
 # ============================================================
@@ -72,5 +121,8 @@ def get_all_telemetry():
         "info": get_system_info(),
         "cpu_temp": get_temp(),
         "cpu": get_cpu_usage(),
-        "mem": get_mem_info()
+        "mem": get_mem_info(),
+        "uptime": get_uptime(),
+        "storage": get_storage_info(),
+        "sys_time": get_system_time()
     }
