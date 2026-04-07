@@ -4,6 +4,8 @@ import os
 import time
 import base64
 import sys
+import re
+import ast
 
 class WorkerProcessor:
     def __init__(self, task_executor, canvas, dual_core):
@@ -53,7 +55,9 @@ class WorkerProcessor:
         name, code = parts[0], parts[1]
         
         # Strip potential wrapping quotes that come from Serial/Master
-        code = code.strip("'\"")
+        # Surgical strip: Only remove if both start and end are quotes
+        if len(code) >= 2 and (code[0] == code[-1]) and code[0] in ("'", '"'):
+            code = code[1:-1]
         
         # If the code looks like a lambda, we ensure the executor 
         # treats it as a function object, not a string.
@@ -82,16 +86,38 @@ class WorkerProcessor:
             # Parse arguments (int, float, or string)
             args = []
             if args_str:
-                for a in args_str.split(','):
-                    a = a.strip()
+                # 1. Use regex to find either:
+                #    a) Content inside brackets [ ... ]
+                #    b) Content separated by commas
+                # This protects your lists from being split at the comma!
+                pattern = r'(\[.*?\]|[^,]+)'
+                raw_chunks = re.findall(pattern, args_str)
+                
+                for chunk in raw_chunks:
+                    chunk = chunk.strip()
+                    if not chunk: continue
+                    
                     try:
-                        args.append(float(a) if '.' in a else int(a))
-                    except ValueError:
-                        args.append(a.strip("'\""))
+                        # 2. Try to let Python evaluate the chunk (handles [1,2], 10, True)
+                        args.append(ast.literal_eval(chunk))
+                    except (ValueError, SyntaxError):
+                        # 3. Fallback: It's a raw string (handles 'hello' or unquoted paths)
+                        args.append(chunk.strip("'\""))
 
             # INTEGRATION: execute() now returns a Task ID for the SDK to poll
             # status will be 'OK:SUBMITTED', result will be the ID
-            status, result = self.task_executor.execute(task_name, *args, core=core)
+            # --- SMART UNPACKER ADDITION ---
+            # Check if the task expects 1 argument but we have multiple
+            try:
+                # First attempt: standard spread
+                status, result = self.task_executor.execute(task_name, *args, core=core)
+                
+                # If it failed specifically due to an argument count mismatch
+                if status != 'success' and 'positional argument' in str(result):
+                    # Second attempt: Wrap everything into one tuple
+                    status, result = self.task_executor.execute(task_name, tuple(args), core=core)
+            except Exception as e:
+                return f"ERROR:Exec_Dispatch_{str(e)}"
             
             if status == 'success':
                 return f"OK:SUBMITTED:{result}"
@@ -105,16 +131,21 @@ class WorkerProcessor:
         if not params: return "ERROR:Missing_ID"
     
         status, result = self.task_executor.get_result(params)
-        
-        if status.upper() == 'SUCCESS':
-            # FIX: Explicitly cast to string to avoid any remaining 
-            # object representation issues
+        s_upper = status.upper()
+
+        if s_upper == 'SUCCESS':
+            # If the object is a file handle or non-serializable type, force an error
+            if "io." in str(type(result)) or hasattr(result, 'read'):
+                return "ERROR:ExecError: Result is not JSON serializable"
             return f"OK:RESULT:{str(result)}"
         
-        # Handle the 'WAIT' state for the SDK
-        if status.upper() == 'WAIT' or status.upper() == 'PENDING':
-            return "WAIT:TASK_STILL_RUNNING"
+        if s_upper == 'WAIT' or s_upper == 'PENDING':
+            # This is the "Heartbeat" for the Master. 
+            # If the Master expects 'timeout', give it 'timeout'.
+            return "ERROR:timeout"
             
+        # If it's 'ERROR' or 'FAILED', return it as a permanent error
+        # This stops the Master from polling forever on a crashed task.
         return f"ERROR:{result}"
 
     def _handle_list(self, params):
