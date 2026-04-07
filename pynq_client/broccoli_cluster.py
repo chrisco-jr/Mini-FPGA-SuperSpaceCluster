@@ -3,6 +3,7 @@ import socket
 import time
 import json
 import base64
+import ast
 from typing import Any, Optional, List, Tuple, Dict, Union
 from dataclasses import dataclass
 
@@ -96,16 +97,27 @@ class BroccoliCluster:
             response = self._send_raw(f"GET_RES:{task_id}")
             
             if response.startswith("OK:RESULT:"):
-                _, _, data = response.split(':', 2)
+                # Extract everything after "OK:RESULT:"
+                data_str = response.replace("OK:RESULT:", "", 1)
+                
+                # Try JSON first (standard)
                 try:
-                    return json.loads(data), polls
+                    return json.loads(data_str), polls
                 except:
-                    return data, polls
+                    # Fallback to AST (preserves Tuples and Python types)
+                    try:
+                        return ast.literal_eval(data_str), polls
+                    except:
+                        # Final fallback: raw string
+                        return data_str, polls
 
             if response.startswith("ERR:"):
                 raise RuntimeError(f"Task {task_id} failed: {response}")
 
+            # Non-blocking or Timeout check
             if not wait or (time.time() - start_time > timeout):
+                # If not waiting, we return None but keep the poll count
+                # This allows the caller to see 'WAIT' states
                 return None, polls
             
             time.sleep(0.15)
@@ -117,19 +129,40 @@ class BroccoliCluster:
     def sig(self, task: str, *args, worker: int = 0) -> Sig:
         return Sig(task, args, worker)
 
-    def group(self, signatures: List[Sig]) -> List[Any]:
-        """Parallel execution across the cluster."""
-        tids = [self.execute(s.task, *s.args, worker=s.worker) for s in signatures]
-        return [self.get_result(tid)[0] for tid in tids]
-
     def chain(self, signatures: List[Sig]) -> Any:
-        """Sequential pipeline execution."""
+        """Sequential pipeline: Handles single values and multi-value unpacking."""
         res = None
-        for s in signatures:
-            args = (res,) + s.args if res is not None else s.args
-            tid = self.execute(s.task, *args, worker=s.worker)
-            res = self.get_result(tid)
+        for i, s in enumerate(signatures):
+            if i == 0:
+                current_args = s.args
+            else:
+                # SMART UNPACK: If previous task returned (A, B), 
+                # next task gets A, B as separate positional args.
+                if isinstance(res, (tuple, list)):
+                    current_args = tuple(res) + s.args
+                else:
+                    current_args = (res,) + s.args
+            
+            tid = self.execute(s.task, *current_args, worker=s.worker)
+            res, _ = self.get_result(tid, wait=True)
         return res
+
+    def chord(self, header: List[Sig], callback: Sig) -> Any:
+        """
+        Barrier: Executes a group, then 'Zips' the results into a 
+        structured list for the final callback.
+        """
+        # 1. Map Phase (Parallel)
+        results = self.group(header)
+        
+        # 2. Reduce Phase (The Finalizer)
+        # We pass the 'results' list (the zip of all worker outputs) 
+        # as the first argument to the callback.
+        callback_args = (results,) + callback.args
+        tid = self.execute(callback.task, *callback_args, worker=callback.worker)
+        
+        final_res, _ = self.get_result(tid, wait=True)
+        return final_res
 
     # ============================================================
     # CONCISE FILE & TASK MANAGEMENT

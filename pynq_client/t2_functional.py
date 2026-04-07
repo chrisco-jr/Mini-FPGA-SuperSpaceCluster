@@ -87,40 +87,130 @@ def run_functional_test(target_ip, num_workers=2):
             print(f"[FAIL] {section}: {e}")
             mgr.log_suite_result(section, False)
 
-        # --- [5/7] Group Orchestration Test ---
+        # --- [5a/7] Basic Orchestration (Group, Chain, Chord) ---
         time.sleep(0.5)
-        section = "[5/7] Simple Orchestration (Group Test)"
+        section = "[5a/7] BASIC ORCHESTRATION (Group, Chain, Chord)"
         print(f"\n{section}")
         try:
-            sigs = []
-            expected = []
-            for i in range(num_workers):
-                cluster.define_task("multiply", "lambda a, b: a * b", worker=i)
-                # Define signatures
-                val1, val2 = (i + 2), (i * i)
-                val3, val4 = (4 - i), (2 * i)
-                
-                sigs.append(cluster.sig("multiply", val1, val2, worker=i))
-                sigs.append(cluster.sig("add", val3, val4, worker=i))
-                
-                expected.append(int(val1 * val2))
-                expected.append(int(val3 + val4))
+            # A. Sequential Chain: (10 + 20) * 2 = 60
+            print("  > Testing Chain Logic (W0 -> W1)...")
+            pipe = [
+                cluster.sig("legacy_add", 10, 20, worker=0),
+                cluster.sig("legacy_multiply", 2, worker=1)
+            ]
+            res_chain = benchmarked_chain(cluster, mgr, "orch_chain", pipe)
 
-            start_orch = time.perf_counter()
-            results = cluster.group(sigs)
-            results = [int(r) for r in results] if results else []
+            # B. Parallel Group: Same task on both workers
+            print("  > Testing Group Logic (Parallel Broadcast)...")
+            sigs = [
+                cluster.sig("legacy_add", 5, 5, worker=0),
+                cluster.sig("legacy_add", 10, 10, worker=1)
+            ]
+            res_group = benchmarked_group(cluster, mgr, "orch_group", sigs)
 
-            if results == expected:
-                mgr.get_tracker("orch").record_result(start_orch)
-                print(f"[OK] Group execution success: {results}")
-                mgr.log_suite_result(section, True)
-            else:
-                mgr.get_tracker("orch").fail_count += 1
-                raise ValueError(f"Got {results}, expected {expected}")
+            # C. Simple Chord: Parallel multiply, then sum
+            print("  > Testing Chord Logic (Barrier Sync)...")
+            cluster.define_task("fuse_simple", "lambda results: sum(r for r in results)", worker=0)
+            chord_header = [
+                cluster.sig("legacy_multiply", 10, 2, worker=0), # 20
+                cluster.sig("legacy_multiply", 5, 2, worker=1)   # 10
+            ]
+            chord_cb = cluster.sig("fuse_simple", worker=0)
+            res_chord = benchmarked_chord(cluster, mgr, "orch_chord", chord_header, chord_cb)
+
+            # Validation
+            success = (int(res_chain) == 60 and 
+                       res_group == [10, 20] and 
+                       int(res_chord) == 30)
+            
+            mgr.log_suite_result(section, success)
+            if success: print(f"[OK] {section} passed.")
         except Exception as e:
             print(f"[FAIL] {section}: {e}")
             mgr.log_suite_result(section, False)
+
+        # --- [5b/7] ADVANCED DATA-FLOW (Smart Pipe) ---
+        time.sleep(0.5)
+        section_adv = "[5b/7] ADVANCED ORCHESTRATION (Unpack & Select)"
+        print(f"\n{section_adv}")
+        try:
+            # Setup Tasks for complex data handling
+            cluster.define_task("gen_tel", "lambda: (0, 100, 200)", worker=0)
+            cluster.define_task("pick_xy", "lambda d: (d[1], d[2])", worker=0)
+            cluster.define_task("scale", "lambda x, y, s: (x*s, y*s)", worker=1)
+            cluster.define_task("sum_vals", "lambda results: sum(r[1] for r in results)", worker=0)
+
+            # A. Unpacking Chain: (0, 100, 200) -> select -> scale
+            print("  > Testing Multi-Return Unpacking...")
+            adv_pipe = [
+                cluster.sig("gen_tel", worker=0),
+                cluster.sig("pick_xy", worker=0),
+                cluster.sig("scale", 0.5, worker=1)
+            ]
+            res_unpack = benchmarked_chain(cluster, mgr, "orch_chain_adv", adv_pipe)
+
+            # B. Structured Chord: Map node results, then reduce specific field
+            print("  > Testing Zipped/Structured Chord...")
+            adv_header = [
+                cluster.sig("get_node_data", "Node0", 50, worker=0), # (ID, Val, RSSI)
+                cluster.sig("get_node_data", "Node1", 75, worker=1)
+            ]
+            adv_cb = cluster.sig("sum_vals", worker=0)
+            res_struct = benchmarked_chord(cluster, mgr, "orch_chord_adv", adv_header, adv_cb)
+
+            # Validation
+            valid = (list(res_unpack) == [50.0, 100.0] and int(res_struct) == 125)
+            mgr.log_suite_result(section_adv, valid)
+            if valid: print(f"[OK] {section_adv} passed.")
+        except Exception as e:
+            print(f"[FAIL] {section_adv}: {e}")
+            mgr.log_suite_result(section_adv, False)
     
+        # --- [6a/7] RESILIENCY: TIMEOUT RECOVERY ---
+        section = "[6a/7] RESILIENCY (TIMEOUT & RETRY)"
+        print(f"\n{section}")
+        try:
+            # Define a task that ignores its arguments and just sleeps
+            cluster.define_task("slow_task", "lambda x: __import__('time').sleep(x) or x", worker=1)
+            
+            print("  > Testing individual task timeout (Expected Failure)...")
+            # We set a low timeout in get_result or wait for the default 15s
+            res = benchmarked_execute(cluster, mgr, "resiliency", "slow_task", 20, worker=1, retries=0)
+            
+            if res is None:
+                print("  [OK] Master correctly identified and recovered from worker timeout.")
+                mgr.log_suite_result(section, True)
+            else:
+                print("  [FAIL] Master waited too long or returned ghost data.")
+                mgr.log_suite_result(section, False)
+        except Exception as e:
+            print(f"  [OK] Caught expected timeout exception: {e}")
+            mgr.log_suite_result(section, True)
+        
+        # --- [6b/7] ROBUSTNESS: ORCHESTRATION BREAKAGE ---
+        section = "[6b/7] ROBUSTNESS (PARTIAL CHORD FAILURE)"
+        print(f"\n{section}")
+        try:
+            print("  > Testing Chord with poisoned callback...")
+            # Header is fine
+            header = [cluster.sig("legacy_add", 1, 1, worker=0), cluster.sig("legacy_add", 2, 2, worker=1)]
+            
+            # Callback is broken (Division by zero)
+            cluster.define_task("broken_reducer", "lambda results: results[0] / 0", worker=0)
+            callback = cluster.sig("broken_reducer", worker=0)
+            
+            try:
+                cluster.chord(header, callback)
+                print("  [FAIL] Chord should have raised an exception.")
+                mgr.log_suite_result(section, False)
+            except RuntimeError as e:
+                print(f"  [OK] Caught expected reduction error: {e}")
+                mgr.log_suite_result(section, True)
+                
+        except Exception as e:
+            print(f"  [FAIL] Unexpected robustness error: {e}")
+            mgr.log_suite_result(section, False)
+
         # --- [6/7] Cleanup Phase ---
         time.sleep(0.5)
         section = "[6/7] Global Cleanup"
@@ -176,7 +266,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     try:
-        run_network_test(args.ip, args.workers)
+        run_functional_test(args.ip, args.workers)
     except Exception as e:
         print(f"\n[FATAL] Script crashed: {e}")
         traceback.print_exc()
