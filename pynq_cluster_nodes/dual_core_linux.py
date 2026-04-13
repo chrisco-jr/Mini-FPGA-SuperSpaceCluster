@@ -143,8 +143,8 @@ class DualCoreExecutor:
         while (time.time() - start) < timeout:
             with self.lock:
                 if task_id in self.results:
-                    return self.results.pop(task_id)
-            time.sleep(0.05)
+                    return self.results.get(task_id)
+            time.sleep(0.01)
 
         return ('error', 'timeout')
 

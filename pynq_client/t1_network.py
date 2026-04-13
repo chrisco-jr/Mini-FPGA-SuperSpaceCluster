@@ -2,7 +2,7 @@ import sys
 import time
 import argparse
 import traceback
-from broccoli_cluster_v2 import BroccoliCluster # Ensure naming matches your saved file
+from broccoli_cluster import BroccoliCluster # Ensure naming matches your saved file
 from benchmarks import BenchmarkManager
 # Ensure test_utils is updated to handle polling!
 from test_utils import benchmarked_execute 
@@ -92,7 +92,7 @@ def run_network_test(target_ip, num_workers=2):
             sigs = []
             expected = []
             for i in range(num_workers):
-                cluster.define_task("multiply", "a * b", worker=i)
+                cluster.define_task("multiply", "lambda a, b: a * b", worker=i)
                 val1, val2 = (i + 2), (i + 3)
                 sigs.append(cluster.sig("multiply", val1, val2, worker=i))
                 expected.append(int(val1 * val2))
@@ -132,8 +132,7 @@ def run_network_test(target_ip, num_workers=2):
         print(f"\n{section}")
         try:
             for w in range(num_workers):
-                # Corrected method name: system_info
-                response = cluster.system_info(worker=w)
+                response = cluster.get_system_info(worker=w)
                 print(f"[OK] Worker {w} Health: {response}")
             mgr.log_suite_result(section, True)
         except Exception as e:

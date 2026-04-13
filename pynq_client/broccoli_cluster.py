@@ -3,6 +3,7 @@ import socket
 import time
 import json
 import base64
+import ast
 from typing import Any, Optional, List, Tuple, Dict, Union
 from dataclasses import dataclass
 
@@ -55,16 +56,13 @@ class BroccoliCluster:
         else:
             self.conn.write(f"{cmd}\n".encode())
             return self.conn.readline().decode().strip()
-
+    
     def __getattr__(self, name):
-        """
-        Syntactic Sugar: Allows cluster.my_task(arg1, worker=0)
-        Automatically handles the execute -> get_result polling loop.
-        """
+        """Sugar: cluster.my_task(arg1, worker=0) -> returns data only."""
         def wrapper(*args, **kwargs):
             worker = kwargs.pop('worker', 0)
-            tid = self.execute(name, *args, worker=worker)
-            return self.get_result(tid, wait=True)
+            # Uses the helper to return clean data
+            return self.execute_and_wait(name, *args, worker=worker)
         return wrapper
 
     # ============================================================
@@ -86,7 +84,13 @@ class BroccoliCluster:
         if response.startswith("OK:SUBMITTED:"):
             return int(response.split(':')[-1].strip())
         raise RuntimeError(f"Task submission failed: {response}")
-              
+    
+    def execute_and_wait(self, name: str, *args, worker: int = 0, timeout: float = 15.0) -> Any:
+        """Helper: Combined Execute + Poll. Returns DATA only."""
+        tid = self.execute(name, *args, worker=worker)
+        result, _ = self.get_result(tid, wait=True, timeout=timeout)
+        return result
+
     def get_result(self, task_id: str, wait: bool = True, timeout: float = 15.0) -> Tuple[Optional[Any], int]:
         """Polls for result and returns (data, poll_count)."""
         start_time = time.time()
@@ -96,17 +100,31 @@ class BroccoliCluster:
             response = self._send_raw(f"GET_RES:{task_id}")
             
             if response.startswith("OK:RESULT:"):
-                _, _, data = response.split(':', 2)
+                # Extract everything after "OK:RESULT:"
+                data_str = response.replace("OK:RESULT:", "", 1)
+                
+                # Try JSON first (standard)
                 try:
-                    return json.loads(data), polls
+                    return json.loads(data_str), polls
                 except:
-                    return data, polls
+                    # Fallback to AST (preserves Tuples and Python types)
+                    try:
+                        return ast.literal_eval(data_str), polls
+                    except:
+                        # Final fallback: raw string
+                        return data_str, polls
 
-            if response.startswith("ERR:"):
-                raise RuntimeError(f"Task {task_id} failed: {response}")
-
-            if not wait or (time.time() - start_time > timeout):
-                return None, polls
+            if response.startswith("ERROR:"):
+                err_msg = response.replace("ERROR:", "", 1)
+        
+                # Check if it's just a transient timeout
+                if "timeout" in err_msg.lower():
+                    if not wait or (time.time() - start_time > timeout):
+                        return None, polls
+                    # If we are waiting, we just continue the loop and sleep
+                else:
+                    # HARD FAILURE: Raise immediately to stop the polling spam!
+                    raise RuntimeError(err_msg)
             
             time.sleep(0.15)
 
@@ -118,18 +136,43 @@ class BroccoliCluster:
         return Sig(task, args, worker)
 
     def group(self, signatures: List[Sig]) -> List[Any]:
-        """Parallel execution across the cluster."""
         tids = [self.execute(s.task, *s.args, worker=s.worker) for s in signatures]
-        return [self.get_result(tid)[0] for tid in tids]
+        return [self.get_result(tid, wait=True)[0] for tid in tids]
 
     def chain(self, signatures: List[Sig]) -> Any:
-        """Sequential pipeline execution."""
+        """Sequential pipeline: Handles single values and multi-value unpacking."""
         res = None
-        for s in signatures:
-            args = (res,) + s.args if res is not None else s.args
-            tid = self.execute(s.task, *args, worker=s.worker)
-            res = self.get_result(tid)
+        for i, s in enumerate(signatures):
+            if i == 0:
+                current_args = s.args
+            else:
+                # SMART UNPACK: If previous task returned (A, B), 
+                # next task gets A, B as separate positional args.
+                if isinstance(res, (tuple, list)):
+                    current_args = tuple(res) + s.args
+                else:
+                    current_args = (res,) + s.args
+            
+            tid = self.execute(s.task, *current_args, worker=s.worker)
+            res, _ = self.get_result(tid, wait=True)
         return res
+
+    def chord(self, header: List[Sig], callback: Sig) -> Any:
+        """
+        Barrier: Executes a group, then 'Zips' the results into a 
+        structured list for the final callback.
+        """
+        # 1. Map Phase (Parallel)
+        results = self.group(header)
+        
+        # 2. Reduce Phase (The Finalizer)
+        # We pass the 'results' list (the zip of all worker outputs) 
+        # as the first argument to the callback.
+        callback_args = (results,) + callback.args
+        tid = self.execute(callback.task, *callback_args, worker=callback.worker)
+        
+        final_res, _ = self.get_result(tid, wait=True)
+        return final_res
 
     # ============================================================
     # CONCISE FILE & TASK MANAGEMENT
@@ -189,10 +232,29 @@ class BroccoliCluster:
     def get_system_info(self, worker: int = 0):
         """Pulls SoC health (XADC Temp/Voltages) and PetaLinux status."""
         return self._send_raw(f"SYS_INFOW:{worker}")
-
+    
+    def broadcast_action(self, action_type: str, num_workers: int):
+        """
+        Uses existing SDK logic to perform cluster-wide operations.
+        """
+        results = []
+        for w in range(num_workers):
+            if action_type == "clear":
+                # Leverages your logic: list_tasks -> remove_task -> CLEARW
+                resp = self.clear_all_tasks(worker=w)
+            elif action_type == "telemetry":
+                # Leverages your direct SYS_INFOW call
+                resp = self.get_system_info(worker=w)
+            else:
+                resp = "ERROR:Unknown_Broadcast_Action"
+            
+            results.append(resp)
+        return results    
+    
     def __enter__(self):
         self.connect()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.conn: self.conn.close()
+      

@@ -44,7 +44,7 @@ class WorkerNode:
                 # 2. Robust Decoding
                 # We strip null bytes which often appear on serial lines during noise
                 try:
-                    message = packet.decode("utf-8", errors='ignore').strip().replace('\x00', '')
+                    message = packet.decode("utf-8", errors='ignore').strip()
                     if not message: continue
                 except Exception as e:
                     if self.debug: print(f"[WARN] Decode error: {e}")
