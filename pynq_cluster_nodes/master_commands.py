@@ -14,6 +14,7 @@ class CommandProcessor:
             "CLEARW":      self._handle_forward,
             "LISTW":       self._handle_forward,
             "SYS_INFOW":   self._handle_forward,
+            "RECONFIGW":   self._handle_forward,
             "RESET_STATS": self._handle_reset,
             "HELP":        self._handle_help,
         }
@@ -27,7 +28,7 @@ class CommandProcessor:
         base_cmd = parts[0]
 
         # 2. Handle "Legacy" shortcuts (e.g., DEFINE -> DEFINEW:0)
-        if base_cmd in ["DEFINE", "EXEC", "UPLOAD", "DELETE", "CLEAR", "LIST", "SYS_INFO"]:
+        if base_cmd in ["DEFINE", "EXEC", "UPLOAD", "DELETE", "CLEAR", "LIST", "SYS_INFO, RECONFIG"]:
             # Reconstruct the line as a 'W' command and re-dispatch
             target_w = f"{base_cmd}W:0:{':'.join(parts[1:])}"
             return self.dispatch(target_w, output_stream)
