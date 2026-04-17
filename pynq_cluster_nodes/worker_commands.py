@@ -180,7 +180,7 @@ class WorkerProcessor:
         
         bitstream = params.strip()
         # Define the path relative to current worker_commands.py
-        script_path = os.path.join("..", "firmware", "load_bistream_partial.sh")
+        script_path = os.path.join("..", "firmware", "load_bitstream_partial.sh")
         
         if not os.path.exists(script_path):
             return f"ERROR:Script_not_found_at_{script_path}"
