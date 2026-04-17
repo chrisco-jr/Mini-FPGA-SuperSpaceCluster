@@ -196,3 +196,10 @@ class BroccoliCluster:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.conn: self.conn.close()
+    
+    # ============================================================
+    # RECONFIGURATION
+    # ============================================================
+
+    def reconfig(self, module_name):
+        return self._send_raw(f"RECONFIG:{module_name}") 

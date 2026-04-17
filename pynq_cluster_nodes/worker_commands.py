@@ -25,6 +25,7 @@ class WorkerProcessor:
             "UPLOAD":    self._handle_upload,
             "DELETE":    self._handle_delete,
             "CLEAR":     self._handle_clear,
+            "RECONFIG":  self._handle_reconfig,
             "RESET":     self._handle_reset
         }
 
@@ -168,6 +169,41 @@ class WorkerProcessor:
 
     def _handle_clear(self, params):
         return self.task_executor.registry.clear_all()
+
+    def _handle_reconfig(self, params):
+        """
+        Handles FPGA Partial Reconfiguration from the firmware directory.
+        Format: RECONFIG:bitstream_name.bin
+        """
+        if not params: 
+            return "ERROR:Missing_Bitstream_Name"
+        
+        bitstream = params.strip()
+        # Define the path relative to current worker_commands.py
+        script_path = os.path.join("..", "firmware", "load_bistream_partial.sh")
+        
+        if not os.path.exists(script_path):
+            return f"ERROR:Script_not_found_at_{script_path}"
+
+        try:
+            import subprocess
+            # Execute the script
+            result = subprocess.run(
+                ['sudo', script_path, bitstream],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0:
+                return f"OK:FPGA_Reconfigured_{bitstream}"
+            else:
+                return f"ERROR:Config_Failed_{result.stderr[:50]}"
+                
+        except subprocess.TimeoutExpired:
+            return "ERROR:PCAP_Timeout_System_Stalled"
+        except Exception as e:
+            return f"ERROR:Internal_{str(e)[:50]}"
 
     def _handle_reset(self, params):
         # Safety flush before reboot
