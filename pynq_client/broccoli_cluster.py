@@ -1,0 +1,198 @@
+import serial
+import socket
+import time
+import json
+import base64
+from typing import Any, Optional, List, Tuple, Dict, Union
+from dataclasses import dataclass
+
+@dataclass
+class Sig:
+    """
+    Task Signature (Sig) object for orchestration.
+    """
+    task: str
+    args: Tuple[Any, ...] = ()
+    worker: int = 0
+
+class BroccoliCluster:
+    """
+    The BroccoliCluster SDK for PYNQ-Z2 SoC Clusters.
+    Compatible with Tier 1 Network & Benchmark Suites.
+    """
+
+    def __init__(self, target: str, mode: str = 'network', port: int = 5000, timeout: float = 5.0):
+        self.target = target
+        self.mode = mode
+        self.port = port
+        self.timeout = timeout
+        self.conn = None
+        self.connected = False
+
+    def connect(self):
+        """Establishes connection to the PetaLinux Master Node."""
+        try:
+            if self.mode == 'network':
+                self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.conn.settimeout(self.timeout)
+                self.conn.connect((self.target, self.port))
+                self.conn_file = self.conn.makefile('rw', encoding='utf-8')
+            else:
+                self.conn = serial.Serial(self.target, 115200, timeout=self.timeout)
+            
+            self.connected = True
+            print(f">> Connected to Broccoli Master ({self.mode}) at {self.target}")
+        except Exception as e:
+            raise ConnectionError(f"Failed to connect: {e}")
+
+    def _send_raw(self, cmd: str) -> str:
+        """Internal transport method."""
+        if not self.connected: raise RuntimeError("Connect first.")
+        if self.mode == 'network':
+            self.conn_file.write(f"{cmd}\n")
+            self.conn_file.flush()
+            return self.conn_file.readline().strip()
+        else:
+            self.conn.write(f"{cmd}\n".encode())
+            return self.conn.readline().decode().strip()
+
+    def __getattr__(self, name):
+        """
+        Syntactic Sugar: Allows cluster.my_task(arg1, worker=0)
+        Automatically handles the execute -> get_result polling loop.
+        """
+        def wrapper(*args, **kwargs):
+            worker = kwargs.pop('worker', 0)
+            tid = self.execute(name, *args, worker=worker)
+            return self.get_result(tid, wait=True)
+        return wrapper
+
+    # ============================================================
+    # CORE ASYNC OPERATIONS
+    # ============================================================
+    
+    def define_task(self, name: str, code: str, worker: int = 0):
+        """Registers a Python expression or lambda in the Worker's TaskRegistry."""
+        command = f"DEFINEW:{worker}:{name}:{code}"
+        response = self._send_raw(command)
+        if not response.startswith('OK:'):
+            raise RuntimeError(f"Task definition failed: {response}")
+        print(f">> Task '{name}' defined on Worker {worker}")
+    
+    def execute(self, name: str, *args, worker: int = 0) -> str:
+        """Submits task and returns a unique Task ID (TID)."""
+        args_str = ",".join(map(str, args))
+        response = self._send_raw(f"EXECW:{worker}:{name}:{args_str}")
+        if response.startswith("OK:SUBMITTED:"):
+            return int(response.split(':')[-1].strip())
+        raise RuntimeError(f"Task submission failed: {response}")
+              
+    def get_result(self, task_id: str, wait: bool = True, timeout: float = 15.0) -> Tuple[Optional[Any], int]:
+        """Polls for result and returns (data, poll_count)."""
+        start_time = time.time()
+        polls = 0
+        while True:
+            polls += 1
+            response = self._send_raw(f"GET_RES:{task_id}")
+            
+            if response.startswith("OK:RESULT:"):
+                _, _, data = response.split(':', 2)
+                try:
+                    return json.loads(data), polls
+                except:
+                    return data, polls
+
+            if response.startswith("ERR:"):
+                raise RuntimeError(f"Task {task_id} failed: {response}")
+
+            if not wait or (time.time() - start_time > timeout):
+                return None, polls
+            
+            time.sleep(0.15)
+
+    # ============================================================
+    # ORCHESTRATION (Sigs, Groups, Chains)
+    # ============================================================
+
+    def sig(self, task: str, *args, worker: int = 0) -> Sig:
+        return Sig(task, args, worker)
+
+    def group(self, signatures: List[Sig]) -> List[Any]:
+        """Parallel execution across the cluster."""
+        tids = [self.execute(s.task, *s.args, worker=s.worker) for s in signatures]
+        return [self.get_result(tid)[0] for tid in tids]
+
+    def chain(self, signatures: List[Sig]) -> Any:
+        """Sequential pipeline execution."""
+        res = None
+        for s in signatures:
+            args = (res,) + s.args if res is not None else s.args
+            tid = self.execute(s.task, *args, worker=s.worker)
+            res = self.get_result(tid)
+        return res
+
+    # ============================================================
+    # CONCISE FILE & TASK MANAGEMENT
+    # ============================================================
+
+    def upload_file(self, filename: str, code: str, worker: int = 0) -> str:
+        """Transfers raw data to PetaLinux via Base64."""
+        encoded_data = base64.b64encode(code.encode("utf-8")).decode("ascii")
+        return self._send_raw(f"UPLOADW:{worker}:{filename}:{encoded_data}")
+    
+    def upload_python_as_task(self, task_name, python_code, worker=0):
+        """Uploads .py file and registers its 'result' function as a task."""
+        self.upload_file(f"{task_name}.py", python_code, worker=worker)
+        logic = f"getattr(__import__('importlib').import_module('{task_name}'), 'result')"
+        return self.define_task(task_name, logic, worker=worker)
+
+    def remove_task(self, name: str, worker: int = 0):
+        """Purges task from RAM and deletes associated .py file from disk."""
+        # Use a one-off expression to delete the file
+        cleanup_expr = f"__import__('os').remove('{name}.py') if __import__('os').path.exists('{name}.py') else 'OK'"
+        self.define_task("_tmp_del", cleanup_expr, worker=worker)
+        tid = self.execute("_tmp_del", worker=worker)
+        self.get_result(tid, timeout=2.0) # Confirm disk write
+
+        # Remove both from registry
+        self._send_raw(f"DELETEW:{worker}:{name}")
+        self._send_raw(f"DELETEW:{worker}:_tmp_del")
+        return f"OK:Purged_{name}"
+
+    def list_tasks(self, worker: int = 0) -> List[str]:
+        """Returns list of registered tasks on a specific worker."""
+        res = self._send_raw(f"LISTW:{worker}")
+        if "OK:FILES:" in res:
+            return [t for t in res.replace("OK:FILES:", "").split(",") if t.strip()]
+        return []
+
+    def clear_all_tasks(self, worker: int = 0):
+        """Resets a worker to a factory-clean state."""
+        tasks = self.list_tasks(worker=worker)
+        for task_name in tasks:
+            self.remove_task(task_name, worker=worker)
+        self._send_raw(f"CLEARW:{worker}")
+        return f"OK:Worker_{worker}_Clear_Complete"
+
+    # ============================================================
+    # UTILITY & TELEMETRY
+    # ============================================================
+
+    def stats(self):
+        """Master node network/packet stats."""
+        return self._send_raw("STATS")
+
+    def reset_stats(self) -> str:
+        """Zeroes out Master node packet counters."""
+        return self._send_raw("RESET_STATS")
+    
+    def get_system_info(self, worker: int = 0):
+        """Pulls SoC health (XADC Temp/Voltages) and PetaLinux status."""
+        return self._send_raw(f"SYS_INFOW:{worker}")
+
+    def __enter__(self):
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.conn: self.conn.close()

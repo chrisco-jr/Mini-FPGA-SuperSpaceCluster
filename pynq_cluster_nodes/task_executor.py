@@ -1,131 +1,63 @@
-# Dynamic Task Execution Engine for MicroPython
-# Allows defining and executing Python code on-the-fly
-
 import time
-
+import re
+import importlib
+import sys
 
 class TaskRegistry:
-    """Registry for dynamically defined tasks"""
-    
     def __init__(self, global_scope=None):
         self.tasks = {}
         self.task_metadata = {}
+        # Use provided scope or fallback to current globals
         self.global_scope = global_scope if global_scope is not None else globals()
         print("[TaskRegistry] Initialized")
     
     def define(self, name, code):
-        """
-        Define a new task from Python code string
-        
-        Args:
-            name: Task name
-            code: Python code as string
-        
-        Returns:
-            Success/error message
-        """
         try:
-            # Create function from code
-            # Check if it's a lambda expression
-            if code.strip().startswith('lambda'):
-                # Store lambda directly
+            code = code.strip()
+            # Handle Lambda directly
+            if code.startswith('lambda'):
                 local_scope = {}
                 exec(f"{name} = {code}", self.global_scope, local_scope)
                 self.tasks[name] = local_scope[name]
-                self.task_metadata[name] = {
-                    'defined_at': time.time(),
-                    'code': code
-                }
-                return f"OK:Task_{name}_defined"
             
-            # Wrap code in function definition if not already a function
-            if not code.strip().startswith('def '):
-                # Detect common parameter names in expression (a, b, c, n, x, y, z)
-                import re
+            # Wrap raw expressions into functions
+            elif not code.startswith('def '):
                 params = []
                 for var in ['a', 'b', 'c', 'n', 'x', 'y', 'z']:
-                    # Check if variable is used in code (as whole word)
                     if re.search(r'\b' + var + r'\b', code):
                         params.append(var)
                 
-                if params:
-                    # Create function with detected parameters
-                    param_list = ', '.join(params)
-                    func_code = f"def {name}({param_list}):\n    return {code}\n"
-                else:
-                    # No parameters detected - use *args
-                    func_code = f"def {name}(*args, **kwargs):\n    return {code}\n"
-                code = func_code
-            
-            # Compile and execute to create function
-            local_scope = {}
-            exec(code, self.global_scope, local_scope)
-            
-            if name in local_scope:
+                param_list = ', '.join(params) if params else "*args, **kwargs"
+                func_code = f"def {name}({param_list}):\n    return {code}\n"
+                
+                local_scope = {}
+                exec(func_code, self.global_scope, local_scope)
                 self.tasks[name] = local_scope[name]
-                # Also add to globals so recursive functions can call themselves
-                self.global_scope[name] = local_scope[name]
+            
+            # Handle full 'def' blocks
             else:
-                # Extract function name from def statement
+                local_scope = {}
+                exec(code, self.global_scope, local_scope)
+                # Find whatever function was just defined
                 func_name = code.split('def ')[1].split('(')[0].strip()
                 self.tasks[name] = local_scope[func_name]
-                # Also add to globals for recursion
-                self.global_scope[name] = local_scope[func_name]
-            
-            self.task_metadata[name] = {
-                'defined_at': time.time(),
-                'code': code
-            }
-            
+
+            # Register globally for recursion support
+            self.global_scope[name] = self.tasks[name]
+            self.task_metadata[name] = {'defined_at': time.time()}
             return f"OK:Task_{name}_defined"
         
-        except SyntaxError as e:
-            return f"ERROR:SyntaxError_{e}"
         except Exception as e:
-            return f"ERROR:{e}"
-    
-    def execute(self, name, *args, **kwargs):
-        """
-        Execute a defined task
-        
-        Args:
-            name: Task name
-            *args: Positional arguments
-            **kwargs: Keyword arguments
-        
-        Returns:
-            Tuple of (status, result)
-        """
-        if name not in self.tasks:
-            return ('error', f'task_{name}_not_defined')
-        
-        try:
-            result = self.tasks[name](*args, **kwargs)
-            return ('success', result)
-        except Exception as e:
-            return ('error', str(e))
-    
-    def list_tasks(self):
-        """Get list of all defined tasks"""
-        return list(self.tasks.keys())
-    
-    def get_task_info(self, name):
-        """Get metadata for a task"""
-        if name in self.task_metadata:
-            return self.task_metadata[name]
-        return None
-    
+            return f"ERROR:Define_Failed_{str(e)}"
+
     def delete_task(self, name):
-        """Remove a task from registry"""
         if name in self.tasks:
             del self.tasks[name]
-            if name in self.task_metadata:
-                del self.task_metadata[name]
+            if name in self.task_metadata: del self.task_metadata[name]
             return f"OK:Task_{name}_deleted"
         return f"ERROR:Task_{name}_not_found"
-    
+
     def clear_all(self):
-        """Clear all tasks"""
         count = len(self.tasks)
         self.tasks.clear()
         self.task_metadata.clear()
@@ -133,83 +65,94 @@ class TaskRegistry:
 
 
 class TaskExecutor:
-    """Main task execution engine combining registry and dual-core execution"""
-    
     def __init__(self, dual_core_executor, global_scope=None):
         self.registry = TaskRegistry(global_scope)
         self.dual_core = dual_core_executor
         self.task_counter = 0
-        print("[TaskExecutor] Initialized")
-    
+
     def define_task(self, name, code):
-        """Define a new task"""
         return self.registry.define(name, code)
-    
-    def execute_task(self, name, args=(), kwargs=None, core=None):
+
+    def execute(self, name, *args, core=None, **kwargs):
         """
-        Execute task with optional core selection
-        
-        Args:
-            name: Task name
-            args: Positional arguments (tuple)
-            kwargs: Keyword arguments (dict)
-            core: 0, 1, or None for auto
-        
-        Returns:
-            Result of task execution
+        Unified Execution Logic: Handles Lambdas, Raw Expressions, 
+        and Dynamic Module Imports (Uploaded Files).
         """
-        if kwargs is None:
-            kwargs = {}
-        
-        # Get task function from registry
         if name not in self.registry.tasks:
-            return f"ERROR:Task_{name}_not_defined"
+            return ('error', f'task_{name}_not_defined')
         
-        task_func = self.registry.tasks[name]
-        
-        # Generate unique task ID
+        # 1. Pull the entry from the registry (string or function object)
+        task_entry = self.registry.tasks[name]
+
+        try:
+            # 2. Convert Strings to Callables
+            if isinstance(task_entry, str):
+                # Strip stray quotes often added by Serial/Network transports
+                task_entry = task_entry.strip().strip("'\"")
+
+                # --- CASE A: Uploaded File (import_module pattern) ---
+                if "import_module" in task_entry:
+                    try:
+                        # Parse "import_module('module_name'), 'func_name')"
+                        module_name = task_entry.split("import_module('")[1].split("'")[0]
+                        func_name = task_entry.split(", '")[1].split("'")[0]
+
+                        # Force reload to ensure we aren't using stale bytecode from a previous upload
+                        if module_name in sys.modules:
+                            importlib.reload(sys.modules[module_name])
+                        
+                        module = importlib.import_module(module_name)
+                        func_ptr = getattr(module, func_name)
+
+                        # WRAPPER: This is the "Secret Sauce." It ensures the shim
+                        # calls a fresh lambda that points to the module's function.
+                        prepared_task = lambda _f=func_ptr *a, **k: _f(*a, **k)
+                    except Exception as e:
+                        return ('error', f'import_resolution_failed_{str(e)}')
+                
+                # --- CASE B: Standard Lambda or Expression ---
+                else:
+                    prepared_task = eval(task_entry)
+            
+            else:
+                # Case C: It's already a function object
+                prepared_task = task_entry
+
+            # 3. Final Validation: Ensure we are sending a "Recipe" to the Shim
+            if not callable(prepared_task):
+                # If it's just a value (like 42), wrap it so func(*args) works in the shim
+                val = prepared_task
+                prepared_task = lambda *a, **k: val
+
+        except Exception as e:
+            return ('error', f'preparation_failed_{str(e)}')
+
+        # 4. Task Identification & Core Assignment
         self.task_counter += 1
-        task_id = f"{name}_{self.task_counter}"
+        task_id = f"{self.task_counter}" 
+        target_core = core if core is not None else 1
         
-        # Execute on specified core
-        status, result = self.dual_core.execute(task_id, task_func, args, kwargs, core)
-        
-        if status == 'success':
-            return f"OK:{result}"
-        else:
-            return f"ERROR:{result}"
-    
-    def execute_task_async(self, name, args=(), kwargs=None, core=1):
-        """Execute task asynchronously"""
-        if kwargs is None:
-            kwargs = {}
-        
-        if name not in self.registry.tasks:
-            return f"ERROR:Task_{name}_not_defined"
-        
-        task_func = self.registry.tasks[name]
-        self.task_counter += 1
-        task_id = f"{name}_{self.task_counter}"
-        
-        self.dual_core.execute_async(task_id, task_func, args, kwargs, core)
-        return f"OK:TaskID_{task_id}"
-    
-    def get_result(self, task_id, timeout_ms=5000):
-        """Get result of async task"""
+        # 5. Hand-off to the DualCoreExecutor Shim
+        try:
+            # We pass the FUNCTION, not the RESULT.
+            # The shim's result = func(*args) will now correctly return a value.
+            self.dual_core.execute_async(task_id, prepared_task, args, kwargs, target_core)
+            return ('success', task_id)
+        except Exception as e:
+            return ('error', f'dispatch_failed_{str(e)}')
+
+    def get_result(self, task_id, timeout_ms=10):
+        """Non-blocking result check for polling"""
         status, result = self.dual_core.get_result(task_id, timeout_ms)
-        if status == 'success':
-            return f"OK:{result}"
-        else:
-            return f"ERROR:{result}"
-    
+        # If dual_core returns 'pending', we tell the master to try again later
+        if status == 'pending':
+            return ('WAIT', 'TASK_STILL_RUNNING')
+        return (status.upper(), result)
+
     def list_tasks(self):
-        """List all defined tasks"""
-        tasks = self.registry.list_tasks()
-        return f"OK:{','.join(tasks)}"
-    
+        tasks = list(self.registry.tasks.keys())
+        return f"OK:{','.join(tasks)}" if tasks else "OK:EMPTY"
+
     def get_stats(self):
-        """Get execution statistics"""
-        queue_sizes = self.dual_core.get_queue_size()
-        task_count = len(self.registry.tasks)
-        
-        return f"OK:tasks={task_count};core0_queue={queue_sizes['core0']};core1_queue={queue_sizes['core1']}"
+        qs = self.dual_core.get_queue_size()
+        return f"OK:tasks={len(self.registry.tasks)};C0_Q={qs['core0']};C1_Q={qs['core1']}"
