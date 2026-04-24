@@ -1,8 +1,8 @@
-# Broccoli ESP32 Cluster - Complete API Reference
+# Broccoli PYNQ-Z2 Cluster - Complete API Reference
 
-**Version**: 2.0 (Multi-Worker)  
-**Date**: February 4, 2026  
-**Hardware**: ESP32-S3 Master + 2x ESP32 Workers
+**Version**: 1.0 (Multi-Worker)  
+**Date**: April 24, 2026  
+**Hardware**: PYNQ-Z2 Master + 2x PYNQ-Z2 Workers
 
 ---
 
@@ -24,9 +24,9 @@
 
 ### Hardware Setup
 ```
-Master (COM8): ESP32-S3
-├─ Worker 0: UART1 (GPIO17 TX, GPIO18 RX, GPIO4 Reset)
-└─ Worker 1: UART2 (GPIO16 TX, GPIO15 RX, GPIO5 Reset)
+Master (<target_ip>): PYNQ Z2
+├─ Worker 0: UART0 on /dev/ttyPS1 (AR0 TX, AR1 RX)
+└─ Worker 1: UART1 on /dev/ttyPS2 (AR2 TX, AR3 RX)
 ```
 
 ### Basic Python Script
@@ -34,7 +34,7 @@ Master (COM8): ESP32-S3
 from broccoli_cluster import BroccoliCluster
 
 # Connect to cluster
-cluster = BroccoliCluster('COM8')
+cluster = BroccoliCluster('<target_ip>')
 cluster.connect()
 
 # Define a task
@@ -50,7 +50,7 @@ cluster.disconnect()
 
 ### Context Manager (Recommended)
 ```python
-with BroccoliCluster('COM8') as cluster:
+with BroccoliCluster('C<target_ip>') as cluster:
     cluster.define_task('square', 'lambda x: x * x')
     result = cluster.execute('square', 10)
     print(f"Result: {result}")
@@ -78,8 +78,7 @@ DEFINE:greet:lambda name: f"Hello, {name}!"
 
 **Response**:
 ```
-OK:DEFINED:add:WORKER0
-OK:Task_add_defined
+[W0 RECV] OK:Task_add_defined
 ```
 
 **Use Cases**:
@@ -106,8 +105,7 @@ DEFINEW:1:encode:lambda msg: msg.upper()
 
 **Response**:
 ```
-OK:DEFINED:add:WORKER0
-OK:Task_add_defined
+[W0 RECV] OK:Task_add_defined
 ```
 
 **Use Cases**:
@@ -133,8 +131,7 @@ EXEC:greet:Alice
 
 **Response**:
 ```
-OK:SUBMITTED:1:WORKER0
-RESULT:add:8
+[W0 RECV] OK:SUBMITTED:1
 ```
 
 **Special Cases**:
@@ -162,8 +159,7 @@ EXECW:1:encode:hello world
 
 **Response**:
 ```
-OK:SUBMITTED:2:WORKER1
-RESULT:multiply:200
+[W0 RECV] OK:SUBMITTED:1
 ```
 
 **Error Cases**:
@@ -175,7 +171,7 @@ EXECW:0:add:                 # OK (empty args)
 
 ---
 
-### 5. EXEC with Core Selection
+### 5. EXEC with Core Selection (Accepted but ignored, task scheduling handled by onboard OS at the moment)
 
 **Format**: `EXEC:<task_name>:CORE:<core_id>:<args>`  
 **Format**: `EXECW:<worker_id>:<task_name>:CORE:<core_id>:<args>`
@@ -192,8 +188,7 @@ EXECW:1:process_b:CORE:1:data2
 
 **Response**:
 ```
-OK:SUBMITTED:3:WORKER0:CORE0
-RESULT:heavy_calc:42
+[W0 RECV] OK:SUBMITTED:2
 ```
 
 **Use Cases**:
@@ -203,7 +198,33 @@ RESULT:heavy_calc:42
 
 ---
 
-### 6. LIST - List Tasks
+### 6. GET_RES
+
+**Format**: `GET_RES:<task_id>`  
+
+**Description**: Retrieves the result of an executed task by calling on the task's task ID.
+
+**Examples**:
+```
+GET_RES:1
+GET_RES:2
+```
+
+**Response**:
+```
+[W0 RECV] OK:RESULT:8
+```
+
+**Use Cases**:
+- Retreive the results of executed tasks
+- Allows longer/more intensive tasks to be queried for results periodically and allow other tasks to run without blocking main bus
+- Isolate time-critical operations
+---
+
+
+
+
+### 7. LIST - List Tasks
 
 **Format**: `LIST`
 
@@ -216,17 +237,16 @@ LIST
 
 **Response**:
 ```
-OK:TASKS:
-add
-square
-multiply
-greet
-END
+[W0 RECV] OK:add,sub
 ```
+
+**Use Cases**:
+- See currently available tasks to run
+---
 
 ---
 
-### 7. STATS - SLIP Statistics
+### 8. STATS - SLIP Statistics
 
 **Format**: `STATS`
 
@@ -239,9 +259,13 @@ STATS
 
 **Response**:
 ```
---- SLIP Statistics ---
-Worker 1: TX=533 bytes (30 pkts), RX=292 bytes (32 pkts)
-Worker 2: TX=309 bytes (17 pkts), RX=167 bytes (17 pkts)
+
+ID   | STATUS       | TX     | RX     | LATENCY
+------------------------------------------------
+0    | ONLINE       | 10     | 10     | 15.5ms
+1    | UNRESPONSIVE | 1      | 0      | ---
+----------------------------------------
+
 ```
 
 **Use Cases**:
@@ -251,7 +275,7 @@ Worker 2: TX=309 bytes (17 pkts), RX=167 bytes (17 pkts)
 
 ---
 
-### 8. RESET - Reset Workers
+### 9. RESET - Reset Workers (NEEDS DEBUGGING)
 
 **Format**: `RESET`
 
@@ -275,41 +299,67 @@ OK:RESETTING_WORKERS
 
 ---
 
-### 9. SETUART - Switch UART (Legacy)
+### 10. DELETE / DELETEW
 
-**Format**: `SETUART:<uart_num>`
+**Format**: `DELETE:<task_name>` or `DELETEW:<worker_id>:<task_name>`
 
-**Description**: Switch active UART (legacy single-worker mode).
+**Description**: Removes a current task in the list.
 
 **Examples**:
 ```
-SETUART:1    # Switch to UART1 (Worker 0)
-SETUART:2    # Switch to UART2 (Worker 1)
+DELETE:mult
+DELETEW:1:add
 ```
 
 **Response**:
 ```
-OK:UART_SWITCHED:1
+[W0 RECV] OK:Task_mult_deleted
+[W1 RECV] OK:Task_add_deleted
 ```
 
-**Note**: For backwards compatibility. Use EXECW/DEFINEW for multi-worker.
+**Use Cases**:
+- Selective deletion of tasks for memory / resource management
+- Remove no longer needed tasks
+
+
+### 11. CLEAR / CLEARW 
+
+**Format**: `CLEAR` or `CLEARW:<worker_id>`
+
+**Description**: Removes all current tasks in task list
+
+**Examples**:
+```
+CLEAR
+CLEARW:1
+```
+
+**Response**:
+```
+[W0 RECV] OK:Cleared_2_tasks
+[W1 RECV] OK:Cleared_1_tasks
+```
+**Use Cases**:
+- Fast way to clear task resources
+- Bring unit back to a known state
 
 ---
 
-### 10. UPLOAD - Upload Code File
+### 12. UPLOAD - Upload Code File (Advanced, requires text to already be encoded in base 64 formatting)
 
-**Format**: `UPLOAD:<filename>:<code>`
+**Format**: `UPLOAD:<filename>:<base64_encoded_text>`
 
-**Description**: Upload Python code file to worker filesystem.
+**Description**: Upload file to worker filesystem.
 
 **Example**:
 ```
-UPLOAD:mymodule.py:def helper(x): return x * 2
+UPLOAD:led_all_on.py:aW1wb3J0IG1tYXAsIG9zOyBmPW9zLm9wZW4oIi9kZXYvbWVtIiwgb3MuT19SRFdSfG9zLk9fU1lOQyk7IG09bW1hcC5tbWFwKGYsIDQwOTYsIG1tYXAuTUFQX1NIQVJFRCwgbW1hcC5QUk9UX1JFQUR8bW1hcC5QUk9UX1dSSVRFLCBvZmZzZXQ9MHg0MTIwMDAwMCk7IG1bNDo4XT1iJ1x4MDBceDAwXHgwMFx4MDAnOyBtWzA6NF09YidceDBmXHgwMFx4MDBceDAwJzsgbS5mbHVzaCgpOyBtLmNsb3NlKCk7IG9zLmNsb3NlKGYp 
+
 ```
 
 **Response**:
 ```
-OK:UPLOADED:mymodule.py
+[W0 RECV] OK:Uploaded_led_all_on.py
 ```
 
 **Use Cases**:
@@ -317,7 +367,50 @@ OK:UPLOADED:mymodule.py
 - Upload configuration files
 - Install custom libraries
 
+
+### 13. SYS_INFO / SYS_INFOW 
+
+**Format**: `SYS_INFO` or `SYS_INFOW:<worker_id>`
+
+**Description**: See internal health telemetry of nodes
+
+**Examples**:
+```
+SYS_INFO
+SYS_INFO:1
+```
+
+**Response**:
+```
+[W0 RECV] OK:[6.12.10-xilinx-g0a0f70e531c7] TEMP:38.9C | CPU:0.0% | RAM:27.6/496.5MB | UP:0d 1h 2m 2s
+[W1 RECV] OK:[6.12.10-xilinx-g0a0f70e531c7] TEMP:39.5C | CPU:9.5% | RAM:28.9/496.5MB | UP:0d 0h 19m 52s
+```
+**Use Cases**:
+- Monitor unit health and resource usage
+- Isolate issues to problem nodes
+
+### 14. RESET_STATS
+
+**Format**: `RESET_STATS`
+
+**Description**: Reset the communication statistics for the network
+
+**Examples**:
+```
+RESET_STATS
+```
+
+**Response**:
+```
+[W0 RECV] OK:[6.12.10-xilinx-g0a0f70e531c7] TEMP:38.9C | CPU:0.0% | RAM:27.6/496.5MB | UP:0d 1h 2m 2s
+[W1 RECV] OK:[6.12.10-xilinx-g0a0f70e531c7] TEMP:39.5C | CPU:9.5% | RAM:28.9/496.5MB | UP:0d 0h 19m 52s
+```
+**Use Cases**:
+- Monitor unit health and resource usage
+- Isolate issues to problem nodes
+
 ---
+
 
 ## Python Client API
 
@@ -325,25 +418,26 @@ Complete reference for `BroccoliCluster` class.
 
 ### Connection Management
 
-#### `__init__(port, baudrate=115200, timeout=2.0)`
+#### `__init__(target, mode, port, timeout)`
 
 **Description**: Initialize cluster client.
 
 **Parameters**:
-- `port` (str): Serial port (e.g., 'COM8', '/dev/ttyUSB0')
-- `baudrate` (int): Baud rate (default 115200)
-- `timeout` (float): Read timeout in seconds
+- `target` (str): Master Node IP Address (e.g., '192.168.0.100')
+- `mode` (str): Mode of master node operation, either 'network' or 'serial' (default 'network'). It is recommended to use network for all API connections
+- `port` (int): Port number of IP (default 5000)
+- `timeout` (float): Read timeout in seconds (default 5.0)
 
 **Example**:
 ```python
-cluster = BroccoliCluster('COM8', baudrate=115200, timeout=5.0)
+cluster = BroccoliCluster(target=192.168.0.100, mode='network', port=5000, timeout=5.0)
 ```
 
 ---
 
 #### `connect()`
 
-**Description**: Connect to ESP32 master node.
+**Description**: Connects to PYNQ Z2 master node
 
 **Example**:
 ```python
@@ -352,12 +446,12 @@ cluster.connect()
 
 **Output**:
 ```
->> Connected to ESP32 cluster on COM8
+>> Connected to Broccoli Master (network) at 192.168.1.100
 ```
 
 ---
 
-#### `disconnect()`
+#### `disconnect()` (not implemented, but honestly a good idea to reimplement)
 
 **Description**: Close serial connection.
 
@@ -374,6 +468,7 @@ cluster.disconnect()
 ---
 
 ### Task Management
+
 
 #### `define_task(name, code, worker=None)`
 
@@ -406,7 +501,7 @@ cluster.define_task('fibonacci', 'lambda n: n if n <= 1 else fibonacci(n-1) + fi
 
 ---
 
-#### `execute(task_name, *args, worker=None, core=None, wait=True, timeout=5.0)`
+#### `execute(task_name, *args, worker=None)`
 
 **Description**: Execute a task on the cluster.
 
@@ -414,30 +509,45 @@ cluster.define_task('fibonacci', 'lambda n: n if n <= 1 else fibonacci(n-1) + fi
 - `task_name` (str): Name of task to execute
 - `*args`: Task arguments (variable length)
 - `worker` (int, optional): Target worker (0, 1, or None)
-- `core` (int, optional): Target core (0, 1, or None)
-- `wait` (bool): Wait for result (default True)
-- `timeout` (float): Timeout in seconds
 
-**Returns**: Task result as string, or None if not waiting.
+**Returns**: Task ID as int (Non-Blocking Operation)
 
 **Examples**:
 ```python
 # Basic execution
-result = cluster.execute('add', 5, 3)
-print(result)  # "8"
+taskID = cluster.execute('add', 5, 3)
+print(taskID)  # "1"
 
 # Specific worker
-result = cluster.execute('multiply', 10, 20, worker=1)
+taskID = cluster.execute('multiply', 10, 20, worker=1)
 
-# Specific worker and core
-result = cluster.execute('heavy_task', 1000, worker=0, core=1)
-
-# Non-blocking
-cluster.execute('long_task', 100, wait=False)
-
-# Custom timeout
-result = cluster.execute('slow_task', 50, timeout=10.0)
 ```
+
+#### `execute_and_wait(task_name, *args, worker=None, timeout)`
+
+**Description**: Execute a task on the cluster.
+
+**Parameters**:
+- `task_name` (str): Name of task to execute
+- `*args`: Task arguments (variable length)
+- `worker` (int, optional): Target worker (0, 1, or None)
+- `timeout` (float, optional): Length of timeout (default 15.0)
+
+**Returns**: Result of executed task name (Blocking Operation)
+
+**Examples**:
+```python
+# Basic execution
+cluster.define_task("id_test", "lambda: 'W0_UNIQUE'")
+res0 = cluster.execute_and_wait("id_test", worker=0)
+print(res0)  # "W0_UNIQUE"
+
+# Specific worker
+cluster.define_task("id_test", "lambda: 'W1_UNIQUE'", worker=1)
+res0 = cluster.execute_and_wait("id_test", worker=0)
+print(res1)  # "W1_UNIQUE"
+```
+
 
 ---
 
