@@ -176,20 +176,26 @@ class WorkerProcessor:
         Format: RECONFIG:bitstream_name.bin
         """
         if not params: 
-            return "ERROR:Missing_Bitstream_Name"
+            return "ERROR:Missing_Bitstream_Binary_Name"
         
         bitstream = params.strip()
         # Define the path relative to current worker_commands.py
         script_path = os.path.join("..", "firmware", "load_bitstream_partial.sh")
-        
+        bitstream_path = os.path.join("..", "firmware", bitstream)
+        print(f"[DEBUG] Script Path:  {script_path}")
+        print(f"[DEBUG] Bitstream Binary Path: {bitstream_path}")
+
         if not os.path.exists(script_path):
             return f"ERROR:Script_not_found_at_{script_path}"
+        if not os.path.exists(bitstream_path):
+            return f"ERROR:Bitstream_not_found_at_{bitstream_path}"
 
         try:
             import subprocess
             # Execute the script
+            command = ['sudo', script_path, bitstream_path]
             result = subprocess.run(
-                ['sudo', script_path, bitstream],
+                command,
                 capture_output=True,
                 text=True,
                 timeout=30
