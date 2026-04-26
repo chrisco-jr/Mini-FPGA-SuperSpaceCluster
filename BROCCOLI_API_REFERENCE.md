@@ -548,6 +548,21 @@ res0 = cluster.execute_and_wait("id_test", worker=0)
 print(res1)  # "W1_UNIQUE"
 ```
 
+#### `get_result(task_id, wait, timeout)`
+
+**Description**: Retrieves the results from an executed task with periodic polling
+
+**Parameters**:
+- `task_id` (str): ID of task to retrieve results from
+- `wait` (bool): Whether to wait for task or not (UNUSED) (default True)
+- `timeout` (float, optional): Length of timeout (default 15.0)
+
+**Returns**: A tuple containing the results affiliated with task ID, and the number of polls 
+
+**Example**:
+```python
+cluster.get_result(tid, wait=True, timeout=2.0)
+```
 
 ---
 
@@ -563,11 +578,14 @@ tasks = cluster.list_tasks()
 print(tasks)  # ['add', 'square', 'multiply']
 ```
 
+
+### Orchestration & Canvas Primitives
+
 ---
 
 ### Canvas Primitives
 
-#### `sig(task, *args, worker=None, core=None, **kwargs)`
+#### `sig(task, *args, worker=None)`
 
 **Description**: Create a task signature for Canvas operations.
 
@@ -575,8 +593,6 @@ print(tasks)  # ['add', 'square', 'multiply']
 - `task` (str): Task name
 - `*args`: Task arguments
 - `worker` (int, optional): Target worker
-- `core` (int, optional): Target core
-- `**kwargs`: Keyword arguments (reserved)
 
 **Returns**: `Sig` object
 
@@ -587,9 +603,6 @@ s1 = cluster.sig('add', 5, 3)
 
 # With worker
 s2 = cluster.sig('square', 10, worker=0)
-
-# With worker and core
-s3 = cluster.sig('process', 100, worker=1, core=0)
 
 # Multiple signatures
 sigs = [
@@ -641,7 +654,7 @@ results = cluster.group([
 **Parameters**:
 - `signatures` (List[Sig]): List of task signatures (pipeline)
 
-**Returns**: Final result after all tasks.
+**Returns**: Final result after all tasks. Unpacks values into separate positional arguments when passed directly to next task (eg., if a previous task returned (A,B), next task receives A,B, as separate positional arguments.
 
 **Examples**:
 ```python
@@ -700,197 +713,124 @@ final_sum = sum(int(x) for x in partial_sums)
 
 ---
 
-### GPIO Operations
 
-#### `gpio_write(pin, state, core=None)`
+### Advanced File & Task Management
 
-**Description**: Write to GPIO pin.
+#### `upload_file(filename, code, worker)`
+
+**Description**: Transfers raw data to Petalinux OS on PYNQ-Z2.
 
 **Parameters**:
-- `pin` (int): GPIO pin number
-- `state` (str): 'HIGH' or 'LOW'
-- `core` (int, optional): Target core
+- `file_name` (str): Name of file to upload
+- `code` (str): Information to be uploaded
+- `worker` (int, optional): Target worker (0, 1, or None)
 
 **Examples**:
 ```python
-# Turn on LED
-cluster.gpio_write(2, 'HIGH')
-
-# Turn off LED
-cluster.gpio_write(2, 'LOW')
-
-# On specific core
-cluster.gpio_write(13, 'HIGH', core=1)
+cluster.upload("test.txt", "Hello World")
+cluster.upload("test2.py", "def result(a, b):\n    return a + b", worker=1)
 ```
 
----
+#### `upload_python_as_task(task_name, code, worker)`
 
-#### `gpio_read(pin, core=None)`
-
-**Description**: Read from GPIO pin.
+**Description**: Uploads .py file and registers its 'result' function as a task. SUitable for larger python scripts.
 
 **Parameters**:
-- `pin` (int): GPIO pin number
-- `core` (int, optional): Target core
-
-**Returns**: Pin state ('0' or '1')
+- `task_name` (str): Name of task to execute
+- `code` (str): Information to be uploaded
+- `worker` (int, optional): Target worker (0, 1, or None)
 
 **Examples**:
 ```python
-# Read button state
-state = cluster.gpio_read(14)
-if state == '1':
-    print("Button pressed")
+heavy_logic = """
+def result(pixel_buffer, width, height, kernel_type="blur"):
+    import math
+    if len(pixel_buffer) != (width * height): return {"err": "mismatch"}
+    normalized = [round(p / 255.0, 4) for p in pixel_buffer]
+    kernels = {"blur": [1/9]*9, "edge": [-1]*4 + [8] + [-1]*4}
+    k = kernels.get(kernel_type, kernels["blur"])
+    output = []
+    for y in range(1, height - 1):
+        for x in range(1, width - 1):
+            sum_val = 0
+            for ky in range(3):
+                for kx in range(3):
+                    pixel = normalized[(y + ky - 1) * width + (x + kx - 1)]
+                    sum_val += pixel * k[ky * 3 + kx]
+            output.append(sum_val)
+    return {"status": "SUCCESS", "avg": sum(normalized)/len(normalized)}
+"""
+cluster.upload_python_as_task("edge_vision", heavy_logic, worker=0)
 
-# Read sensor
-value = cluster.gpio_read(25, core=0)
 ```
+#### `remove_task(name, worker)`
 
----
-
-#### `pwm(pin, channel, freq, resolution, duty, core=None)`
-
-**Description**: Set PWM output.
+**Description**: Purges task from RAM and deletes associated .py file from disk
 
 **Parameters**:
-- `pin` (int): GPIO pin number
-- `channel` (int): PWM channel (0-15)
-- `freq` (int): Frequency in Hz
-- `resolution` (int): Resolution in bits (1-16)
-- `duty` (int): Duty cycle (0 to 2^resolution - 1)
-- `core` (int, optional): Target core
+- `name` (str): Name of task to be removed
+- `worker` (int, optional): Target worker (0, 1, or None)
+
 
 **Examples**:
 ```python
-# 50% duty cycle at 1kHz, 8-bit resolution
-cluster.pwm(pin=5, channel=0, freq=1000, resolution=8, duty=127)
-
-# Servo control (50Hz, 16-bit)
-cluster.pwm(pin=18, channel=1, freq=50, resolution=16, duty=3276)
-
-# LED brightness control
-for brightness in range(0, 256, 16):
-    cluster.pwm(pin=2, channel=0, freq=5000, resolution=8, duty=brightness)
-    time.sleep(0.1)
+cluster.upload("test.txt", "Hello World")
+cluster.upload("test2.py", "def result(a, b):\n    return a + b", worker=1)
 ```
 
----
+#### `list_tasks(worker)`
 
-#### `adc_read(pin, core=None)`
-
-**Description**: Read analog value from ADC pin.
+**Description**: Returns list of registered tasks on a specific worker
 
 **Parameters**:
-- `pin` (int): ADC pin number (32-39 on ESP32)
-- `core` (int, optional): Target core
+- `worker` (int, optional): Target worker (0, 1, or None)
 
-**Returns**: ADC value (0-4095 for 12-bit ADC)
+**Returns**: List of tasks on task list of a worker
 
 **Examples**:
 ```python
-# Read potentiometer
-value = cluster.adc_read(34)
-print(f"ADC: {value}")
-
-# Read multiple sensors
-sensor1 = cluster.adc_read(36, core=0)
-sensor2 = cluster.adc_read(39, core=1)
-
-# Average multiple readings
-readings = [int(cluster.adc_read(34)) for _ in range(10)]
-average = sum(readings) / len(readings)
+tasks = cluster.list_tasks()
+print(tasks)
+w1_tasks = cluster.list_tasks(worker=1)
+print (w1_tasks)
 ```
 
----
+#### `clear_all_tasks(worker)`
 
-### System Monitoring
+**Description**: Clears all registered tasks on a specific worker
 
-#### `get_system_info()`
+**Parameters**:
+- `worker` (int, optional): Target worker (0, 1, or None)
 
-**Description**: Get system information.
+**Examples**:
+```python
+cluster.clear_all_tasks()
+cluster.clear_all_tasks(worker=1)
 
-**Returns**: Dictionary with platform, cores, freq, micropython version.
+```
+
+### Utility & Telemetry
+
+#### `stats()`
+
+**Description**: Retrieve Master node network/packet stats 
+
+**Returns**: Concise informatino of network/packet stats of the cluster
 
 **Example**:
 ```python
-info = cluster.get_system_info()
-print(f"Platform: {info['platform']}")
-print(f"Cores: {info['cores']}")
-print(f"Frequency: {info['freq']}")
+stats = cluster.stats()
+print(f"[OK] Network Stats: {stats}")
 ```
 
 **Output**:
 ```
-Platform: ESP32-S3
-Cores: 2
-Frequency: 240MHz
+OK:STATS|W0:ONLINE:329:329:21.3ms|W1:ONLINE:806:806:19.8ms
 ```
 
 ---
 
-#### `get_ram_usage()`
-
-**Description**: Get real-time RAM usage.
-
-**Returns**: Dictionary with total, used, free, usage.
-
-**Example**:
-```python
-ram = cluster.get_ram_usage()
-print(f"RAM Usage: {ram['usage']}")
-print(f"Free: {ram['free']:,} bytes")
-```
-
-**Output**:
-```
-RAM Usage: 14.1%
-Free: 320,000 bytes
-```
-
----
-
-#### `get_flash_usage()`
-
-**Description**: Get flash memory usage.
-
-**Returns**: Dictionary with total, used, free, usage.
-
-**Example**:
-```python
-flash = cluster.get_flash_usage()
-print(f"Flash: {flash['usage']}")
-```
-
----
-
-#### `get_cpu_usage()`
-
-**Description**: Get CPU usage per core.
-
-**Returns**: Dictionary with core0, core1 usage.
-
-**Example**:
-```python
-cpu = cluster.get_cpu_usage()
-print(f"Core 0: {cpu['core0']}")
-print(f"Core 1: {cpu['core1']}")
-```
-
----
-
-#### `get_task_list()`
-
-**Description**: Get FreeRTOS task list.
-
-**Returns**: Dictionary with count and tasks list.
-
-**Example**:
-```python
-tasks = cluster.get_task_list()
-print(f"Running {tasks['count']} tasks")
-for task in tasks['tasks']:
-    print(f"  {task}")
-```
+Updated up to here
 
 ---
 
@@ -958,93 +898,6 @@ Worker 2: TX=309 bytes (17 pkts), RX=167 bytes (17 pkts)
 
 ---
 
-### Peripheral Control
-
-#### `i2c_init(sda, scl, freq=100000, core=None)`
-
-**Description**: Initialize I2C bus.
-
-**Parameters**:
-- `sda` (int): SDA pin number
-- `scl` (int): SCL pin number
-- `freq` (int): I2C frequency in Hz (default 100kHz)
-- `core` (int, optional): Target core
-
-**Example**:
-```python
-# Standard I2C at 100kHz
-cluster.i2c_init(sda=21, scl=22, freq=100000)
-
-# Fast mode at 400kHz
-cluster.i2c_init(sda=21, scl=22, freq=400000)
-```
-
----
-
-#### `spi_init(sck, miso, mosi, ss, freq=1000000, core=None)`
-
-**Description**: Initialize SPI bus.
-
-**Parameters**:
-- `sck` (int): SCK pin number
-- `miso` (int): MISO pin number
-- `mosi` (int): MOSI pin number
-- `ss` (int): SS pin number
-- `freq` (int): SPI frequency in Hz (default 1MHz)
-- `core` (int, optional): Target core
-
-**Example**:
-```python
-# Standard SPI
-cluster.spi_init(sck=18, miso=19, mosi=23, ss=5, freq=1000000)
-
-# High-speed SPI
-cluster.spi_init(sck=18, miso=19, mosi=23, ss=5, freq=10000000)
-```
-
----
-
-#### `uart_init(tx, rx, baud=115200, core=None)`
-
-**Description**: Initialize UART.
-
-**Parameters**:
-- `tx` (int): TX pin number
-- `rx` (int): RX pin number
-- `baud` (int): Baud rate (default 115200)
-- `core` (int, optional): Target core
-
-**Example**:
-```python
-# GPS module at 9600 baud
-cluster.uart_init(tx=17, rx=16, baud=9600)
-
-# High-speed UART
-cluster.uart_init(tx=17, rx=16, baud=921600)
-```
-
----
-
-#### `can_init(tx, rx, baudrate=500000, core=None)`
-
-**Description**: Initialize CAN bus.
-
-**Parameters**:
-- `tx` (int): TX pin number
-- `rx` (int): RX pin number
-- `baudrate` (int): CAN baudrate (125000, 250000, 500000, 1000000)
-- `core` (int, optional): Target core
-
-**Example**:
-```python
-# Standard CAN at 500kbps
-cluster.can_init(tx=5, rx=4, baudrate=500000)
-
-# High-speed CAN at 1Mbps
-cluster.can_init(tx=5, rx=4, baudrate=1000000)
-```
-
----
 
 ### File Operations
 
