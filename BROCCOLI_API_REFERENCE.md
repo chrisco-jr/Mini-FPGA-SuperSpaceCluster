@@ -275,7 +275,7 @@ ID   | STATUS       | TX     | RX     | LATENCY
 
 ---
 
-### 9. RESET - Reset Workers (NEEDS DEBUGGING)
+### 9. RESET - Reset Workers (NOT IMPLEMENTED)
 
 **Format**: `RESET`
 
@@ -564,21 +564,6 @@ print(res1)  # "W1_UNIQUE"
 cluster.get_result(tid, wait=True, timeout=2.0)
 ```
 
----
-
-#### `list_tasks()`
-
-**Description**: Get list of defined tasks.
-
-**Returns**: List of task names.
-
-**Example**:
-```python
-tasks = cluster.list_tasks()
-print(tasks)  # ['add', 'square', 'multiply']
-```
-
-
 ### Orchestration & Canvas Primitives
 
 ---
@@ -774,8 +759,8 @@ cluster.upload_python_as_task("edge_vision", heavy_logic, worker=0)
 
 **Examples**:
 ```python
-cluster.upload("test.txt", "Hello World")
-cluster.upload("test2.py", "def result(a, b):\n    return a + b", worker=1)
+cluster.remove_task("add_complex") # Removes task from worker 0 by default
+cluster.remove_task("add_complex", worker=1) # Removes task from worker 1
 ```
 
 #### `list_tasks(worker)`
@@ -811,11 +796,12 @@ cluster.clear_all_tasks(worker=1)
 
 ### Utility & Telemetry
 
+---
 #### `stats()`
 
 **Description**: Retrieve Master node network/packet stats 
 
-**Returns**: Concise informatino of network/packet stats of the cluster
+**Returns**: Concise information of network/packet stats of the cluster
 
 **Example**:
 ```python
@@ -830,519 +816,77 @@ OK:STATS|W0:ONLINE:329:329:21.3ms|W1:ONLINE:806:806:19.8ms
 
 ---
 
-Updated up to here
+#### `reset_stats()`
 
----
+**Description**: Resets network/packet stats recorded on Master back to 0
 
-#### `print_system_status()`
-
-**Description**: Print formatted system status report.
 
 **Example**:
 ```python
-cluster.print_system_status()
+cluster.reset_stats()
 ```
 
 **Output**:
 ```
-============================================================
-ESP32 SYSTEM STATUS
-============================================================
-
-[System Information]
-  Platform: ESP32-S3
-  Cores: 2
-  Frequency: 240MHz
-  MicroPython: v1.22.2
-
-[Memory (RAM)]
-  Total:        327,680 bytes
-  Used:          45,000 bytes
-  Free:         282,680 bytes
-  Usage:           13.7%
-
-[Flash Memory (Non-Volatile)]
-  Total:      8,388,608 bytes
-  Used:         300,000 bytes
-  Free:       8,088,608 bytes
-  Usage:            3.6%
-
-[CPU Usage]
-  Core 0:   45.2%
-  Core 1:   32.8%
-
-[FreeRTOS Tasks] (5 tasks)
-  main=running
-  mp_task=running
-  ...
-============================================================
+Pending...
 ```
 
 ---
 
-#### `stats()`
+#### `get_system_info(worker)`
 
-**Description**: Print SLIP statistics.
+**Description**: Retrieves system information from worker nodes
+
+**Returns**: Printed report of kernel, cpu temp, cpu utilization, RAM utilization, and uptime
 
 **Example**:
 ```python
-cluster.stats()
+sys_info = cluster.get_system_info(worker = 1)
+print(sys_info)
 ```
 
 **Output**:
 ```
---- SLIP Statistics ---
-Worker 1: TX=533 bytes (30 pkts), RX=292 bytes (32 pkts)
-Worker 2: TX=309 bytes (17 pkts), RX=167 bytes (17 pkts)
+Pending...
 ```
+#### `broadcast_action(action_type, num_workers)`
 
----
+**Description**: Uses existing SDK logic to perform cluster-wide operations. Currently supports 'clear' and 'telemetry' broadcast actions. 
 
-
-### File Operations
-
-#### `upload_code(filename, code)`
-
-**Description**: Upload Python code file to worker.
-
-**Parameters**:
-- `filename` (str): Target filename
-- `code` (str): Python code content
+**Returns**: List of responses from applied action_types from each node.
 
 **Example**:
 ```python
-# Upload utility module
-code = """
-def helper(x):
-    return x * 2
+reset_responses = cluster.broadcast_action("clear", num_workers)
+print(reset_responses)
+```
 
-def process(data):
-    return [helper(x) for x in data]
-"""
-cluster.upload_code('utils.py', code)
+**Output**:
+```
+Pending...
+```
 
-# Upload configuration
-config = "THRESHOLD = 100\nMAX_RETRIES = 3"
-cluster.upload_code('config.py', config)
+### FPGA Reconfiguration
+
+---
+#### `reconfig(module, worker)` (TO BE IMPLEMENTED)
+
+**Description**: Commands a worker to load a binary bitsream located in the firmware folder if it exists
+
+**Returns**: Response from the worker node
+
+**Example**:
+```python
+reconfig_response = cluster.reconfig('led_module.bin')
+print(reconfig_response)
+```
+
+**Output**:
+```
+OK:FPGA_Reconfigured_led_module.bin
 ```
 
 ---
-
-## Advanced Examples
-
-### Example 1: Parallel Data Processing
-
-```python
-with BroccoliCluster('COM8') as cluster:
-    # Define tasks on both workers
-    cluster.define_task('process', 'lambda x: x * x + 1', worker=0)
-    cluster.define_task('process', 'lambda x: x * x + 1', worker=1)
-    
-    # Generate data
-    data = range(100)
-    
-    # Parallel processing
-    results = cluster.group([
-        cluster.sig('process', val, worker=i % 2)
-        for i, val in enumerate(data)
-    ])
-    
-    # Aggregate
-    total = sum(int(x) for x in results)
-    print(f"Total: {total}")
-```
-
----
-
-### Example 2: Sensor Data Pipeline
-
-```python
-with BroccoliCluster('COM8') as cluster:
-    # Define pipeline stages
-    cluster.define_task('read_sensor', 'lambda pin: adc_read(pin)', worker=0)
-    cluster.define_task('normalize', 'lambda x: x / 4095.0', worker=1)
-    cluster.define_task('smooth', 'lambda x: x * 0.8 + prev * 0.2', worker=0)
-    cluster.define_task('threshold', 'lambda x: 1 if x > 0.5 else 0', worker=1)
-    
-    # Execute pipeline
-    result = cluster.chain([
-        cluster.sig('read_sensor', 34, worker=0),
-        cluster.sig('normalize', worker=1),
-        cluster.sig('smooth', worker=0),
-        cluster.sig('threshold', worker=1)
-    ])
-    
-    print(f"Threshold result: {result}")
-```
-
----
-
-### Example 3: LED Control with PWM
-
-```python
-with BroccoliCluster('COM8') as cluster:
-    # Fade LED in and out
-    pin = 2
-    channel = 0
-    freq = 5000
-    resolution = 8  # 8-bit (0-255)
-    
-    # Fade in
-    for duty in range(0, 256, 5):
-        cluster.pwm(pin, channel, freq, resolution, duty)
-        time.sleep(0.02)
-    
-    # Fade out
-    for duty in range(255, -1, -5):
-        cluster.pwm(pin, channel, freq, resolution, duty)
-        time.sleep(0.02)
-```
-
----
-
-### Example 4: Multi-Sensor Monitoring
-
-```python
-with BroccoliCluster('COM8') as cluster:
-    # Define sensor reading tasks
-    cluster.define_task('read_temp', 'lambda: adc_read(34)', worker=0)
-    cluster.define_task('read_light', 'lambda: adc_read(35)', worker=0)
-    cluster.define_task('read_pressure', 'lambda: adc_read(36)', worker=1)
-    cluster.define_task('read_humidity', 'lambda: adc_read(39)', worker=1)
-    
-    # Read all sensors in parallel
-    while True:
-        readings = cluster.group([
-            cluster.sig('read_temp', worker=0),
-            cluster.sig('read_light', worker=0),
-            cluster.sig('read_pressure', worker=1),
-            cluster.sig('read_humidity', worker=1)
-        ])
-        
-        temp, light, pressure, humidity = readings
-        print(f"T={temp} L={light} P={pressure} H={humidity}")
-        time.sleep(1.0)
-```
-
----
-
-### Example 5: Image Processing Pipeline
-
-```python
-with BroccoliCluster('COM8') as cluster:
-    # Define image processing stages
-    cluster.define_task('grayscale', 'lambda img: convert_grayscale(img)', worker=0)
-    cluster.define_task('blur', 'lambda img: gaussian_blur(img, 5)', worker=1)
-    cluster.define_task('edge_detect', 'lambda img: sobel_filter(img)', worker=0)
-    cluster.define_task('threshold', 'lambda img: binary_threshold(img, 128)', worker=1)
-    
-    # Process image through pipeline
-    result = cluster.chain([
-        cluster.sig('grayscale', worker=0),
-        cluster.sig('blur', worker=1),
-        cluster.sig('edge_detect', worker=0),
-        cluster.sig('threshold', worker=1)
-    ])
-    
-    print(f"Processed image: {result}")
-```
-
----
-
-### Example 6: Distributed Monte Carlo Simulation
-
-```python
-import random
-
-with BroccoliCluster('COM8') as cluster:
-    # Define Monte Carlo iteration
-    code = '''
-lambda n: sum(1 for _ in range(n) 
-              if random.random()**2 + random.random()**2 <= 1)
-'''
-    cluster.define_task('monte_carlo', code, worker=0)
-    cluster.define_task('monte_carlo', code, worker=1)
-    
-    # Run parallel iterations
-    iterations_per_worker = 100000
-    results = cluster.group([
-        cluster.sig('monte_carlo', iterations_per_worker, worker=0),
-        cluster.sig('monte_carlo', iterations_per_worker, worker=1)
-    ])
-    
-    # Estimate Pi
-    total_inside = sum(int(x) for x in results)
-    total_points = iterations_per_worker * 2
-    pi_estimate = 4 * total_inside / total_points
-    print(f"Pi estimate: {pi_estimate}")
-```
-
----
-
-### Example 7: Real-Time Control System
-
-```python
-with BroccoliCluster('COM8') as cluster:
-    # PID controller on Worker 0
-    cluster.define_task('pid_compute', '''
-lambda setpoint, measured, kp, ki, kd: 
-    kp * (setpoint - measured) + ki * integral + kd * derivative
-''', worker=0)
-    
-    # Motor control on Worker 1
-    cluster.define_task('set_motor', 'lambda pwm_value: motor_set(pwm_value)', worker=1)
-    
-    # Control loop
-    setpoint = 100
-    while True:
-        # Read sensor
-        measured = int(cluster.execute('read_sensor', 34, worker=0))
-        
-        # Compute control signal
-        control = cluster.execute('pid_compute', setpoint, measured, 
-                                 1.0, 0.1, 0.01, worker=0)
-        
-        # Apply control
-        cluster.execute('set_motor', control, worker=1)
-        
-        time.sleep(0.01)  # 100Hz control loop
-```
-
----
-
-### Example 8: Network Packet Processing
-
-```python
-with BroccoliCluster('COM8') as cluster:
-    # Define packet processing stages
-    cluster.define_task('parse_header', 'lambda pkt: extract_header(pkt)', worker=0)
-    cluster.define_task('validate', 'lambda hdr: check_checksum(hdr)', worker=1)
-    cluster.define_task('decrypt', 'lambda data: aes_decrypt(data)', worker=0)
-    cluster.define_task('decompress', 'lambda data: zlib_decompress(data)', worker=1)
-    
-    # Process packet queue
-    packets = get_packet_queue()
-    
-    results = cluster.group([
-        cluster.chain([
-            cluster.sig('parse_header', worker=0),
-            cluster.sig('validate', worker=1),
-            cluster.sig('decrypt', worker=0),
-            cluster.sig('decompress', worker=1)
-        ])
-        for pkt in packets
-    ])
-```
-
----
-
-### Example 9: System Diagnostics
-
-```python
-with BroccoliCluster('COM8') as cluster:
-    print("=" * 60)
-    print("CLUSTER DIAGNOSTICS")
-    print("=" * 60)
-    
-    # Test both workers
-    cluster.define_task('test', 'lambda x: x * 2', worker=0)
-    cluster.define_task('test', 'lambda x: x * 2', worker=1)
-    
-    # Execute test
-    results = cluster.group([
-        cluster.sig('test', 21, worker=0),
-        cluster.sig('test', 21, worker=1)
-    ])
-    
-    print(f"\nWorker 0 test: {results[0]} {'✓ PASS' if results[0] == '42' else '✗ FAIL'}")
-    print(f"Worker 1 test: {results[1]} {'✓ PASS' if results[1] == '42' else '✗ FAIL'}")
-    
-    # Check SLIP stats
-    print("\n")
-    cluster.stats()
-    
-    # System info
-    print("\n")
-    cluster.print_system_status()
-```
-
----
-
-### Example 10: Task Decorator Pattern
-
-```python
-from broccoli_cluster import BroccoliCluster, Task
-
-# Set default cluster
-cluster = BroccoliCluster('COM8')
-cluster.connect()
-Task.set_cluster(cluster)
-
-# Define tasks with decorators
-@Task
-def add(x, y):
-    return x + y
-
-@Task
-def square(x):
-    return x * x
-
-# Execute remotely
-result1 = add.remote(5, 3)      # Executes on cluster
-result2 = square.remote(10)     # Executes on cluster
-
-# Or execute locally (for testing)
-result3 = add(5, 3)             # Executes locally
-result4 = square(10)            # Executes locally
-
-print(f"Remote: {result1}, {result2}")
-print(f"Local: {result3}, {result4}")
-
-cluster.disconnect()
-```
-
----
-
-## Error Handling
-
-### Common Errors
-
-#### Connection Errors
-```python
-try:
-    cluster = BroccoliCluster('COM8')
-    cluster.connect()
-except serial.SerialException as e:
-    print(f"Failed to connect: {e}")
-    # Check if port exists, cable connected, etc.
-```
-
-#### Task Execution Errors
-```python
-try:
-    result = cluster.execute('undefined_task', 10)
-except RuntimeError as e:
-    print(f"Execution failed: {e}")
-    # Task not defined, check with list_tasks()
-```
-
-#### Timeout Errors
-```python
-# Increase timeout for slow tasks
-result = cluster.execute('slow_task', 1000, timeout=30.0)
-
-# Or disable wait
-cluster.execute('background_task', 100, wait=False)
-```
-
-#### Worker Unavailable
-```python
-# Check STATS to verify worker communication
-cluster.stats()
-
-# Reset workers if needed
-cluster._send_command('RESET')
-time.sleep(2.0)
-```
-
----
-
-## Performance Tips
-
-### 1. Use Parallel Execution
-```python
-# ✗ Slow: Sequential
-for i in range(10):
-    result = cluster.execute('process', i, worker=0)
-
-# ✓ Fast: Parallel
-results = cluster.group([
-    cluster.sig('process', i, worker=i % 2)
-    for i in range(10)
-])
-```
-
-### 2. Minimize Data Transfer
-```python
-# ✗ Bad: Send large data back and forth
-data = range(10000)
-for x in data:
-    cluster.execute('process', x)
-
-# ✓ Good: Upload code, process on worker
-code = "lambda: [process(x) for x in range(10000)]"
-cluster.define_task('batch_process', code)
-result = cluster.execute('batch_process')
-```
-
-### 3. Use Core Pinning
-```python
-# Pin time-critical tasks to specific cores
-cluster.execute('sensor_read', 34, worker=0, core=0)
-cluster.execute('control_loop', 100, worker=0, core=1)
-```
-
-### 4. Batch Operations
-```python
-# Define multiple tasks at once
-tasks = {
-    'add': 'lambda x, y: x + y',
-    'multiply': 'lambda x, y: x * y',
-    'square': 'lambda x: x * x'
-}
-
-for name, code in tasks.items():
-    cluster.define_task(name, code)
-```
-
----
-
-## Troubleshooting
-
-### Worker Not Responding
-```bash
-# Check serial connection
-cluster.stats()
-
-# Reset workers
-cluster._send_command('RESET')
-time.sleep(2.0)
-
-# Re-upload worker code if needed
-```
-
-### Task Returns Wrong Result
-```python
-# List defined tasks
-tasks = cluster.list_tasks()
-print(f"Defined tasks: {tasks}")
-
-# Redefine task
-cluster.define_task('task_name', 'corrected_code')
-```
-
-### Slow Execution
-```python
-# Check SLIP stats for errors
-cluster.stats()
-
-# Monitor system resources
-cluster.print_system_status()
-
-# Reduce timeout for faster failure detection
-result = cluster.execute('task', 10, timeout=1.0)
-```
-
-### Import Errors on Worker
-```python
-# Upload required modules
-with open('mymodule.py') as f:
-    code = f.read()
-cluster.upload_code('mymodule.py', code)
-
-# Then import in task
-cluster.define_task('use_module', 'lambda: import_and_use()')
-```
 
 ---
 
@@ -1352,47 +896,54 @@ cluster.define_task('use_module', 'lambda: import_and_use()')
 | Command | Format | Description |
 |---------|--------|-------------|
 | DEFINE | `DEFINE:name:code` | Define task on Worker 0 |
-| DEFINEW | `DEFINEW:worker:name:code` | Define task on specific worker |
-| EXEC | `EXEC:name:args` | Execute on Worker 0 |
-| EXECW | `EXECW:worker:name:args` | Execute on specific worker |
-| LIST | `LIST` | List all tasks |
-| STATS | `STATS` | Show SLIP statistics |
-| RESET | `RESET` | Reset all workers |
-| SETUART | `SETUART:uart_num` | Switch UART (legacy) |
-| UPLOAD | `UPLOAD:file:code` | Upload code file |
+| DEFINEW | `DEFINEW:worker_id:name:code` | Define task on specific worker |
+| EXEC | `EXEC:name:args` | Execute on Worker 0; returns Task ID |
+| EXECW | `EXECW:worker_id:name:args` | Execute on specific worker; returns Task ID |
+| GET_RES | `GET_RES:task_id` | Retrieve result for a specific Task ID |
+| LIST | `LIST` | List all tasks on Worker 0 |
+| STATS | `STATS` | Show SLIP statistics for all workers |
+| DELETE | `DELETE:name` | Remove a task from Worker 0 |
+| DELETEW | `DELETEW:worker_id:name` | Remove task from a specific worker |
+| CLEAR | `CLEAR` | Remove all tasks from Worker 0 |
+| CLEARW | `CLEARW:worker_id` | Remove all tasks from a specific worker |
+| UPLOAD | `UPLOAD:filename:base64` | Upload code file to worker filesystem |
+| SYS_INFO | `SYS_INFO` | Get telemetry for Worker 0 |
+| SYS_INFOW | `SYS_INFOW:worker_id` | Get telemetry for a specific worker |
+| RESET_STATS | `RESET_STATS` | Reset network communication statistics |
+| RESET | `RESET` | Hardware reset all workers (Not Implemented) |
 
 ### Python Methods
 | Method | Parameters | Returns | Description |
 |--------|------------|---------|-------------|
 | `connect()` | - | None | Connect to master |
-| `disconnect()` | - | None | Disconnect |
-| `define_task()` | name, code, worker | None | Define task |
-| `execute()` | name, *args, worker, core, wait, timeout | str | Execute task |
-| `sig()` | task, *args, worker, core | Sig | Create signature |
-| `group()` | signatures | List | Parallel execution |
-| `chain()` | signatures | Any | Sequential pipeline |
-| `chord()` | headers, callback | Any | Map-reduce |
-| `list_tasks()` | - | List[str] | List tasks |
-| `stats()` | - | None | Print SLIP stats |
-| `gpio_write()` | pin, state, core | str | Write GPIO |
-| `gpio_read()` | pin, core | str | Read GPIO |
-| `pwm()` | pin, channel, freq, res, duty, core | str | Set PWM |
-| `adc_read()` | pin, core | str | Read ADC |
-| `get_system_info()` | - | Dict | System info |
-| `get_ram_usage()` | - | Dict | RAM usage |
-| `get_flash_usage()` | - | Dict | Flash usage |
-| `get_cpu_usage()` | - | Dict | CPU usage |
-| `get_task_list()` | - | Dict | FreeRTOS tasks |
-| `print_system_status()` | - | None | Print diagnostics |
-| `i2c_init()` | sda, scl, freq, core | str | Init I2C |
-| `spi_init()` | sck, miso, mosi, ss, freq, core | str | Init SPI |
-| `uart_init()` | tx, rx, baud, core | str | Init UART |
-| `can_init()` | tx, rx, baudrate, core | str | Init CAN |
-| `upload_code()` | filename, code | str | Upload file |
+| `disconnect()` | - | None | Disconnect from cluster |
+| `define_task()` | name, code, worker | None | Define task on specified worker |
+| `execute()` | name, *args, worker | int | Execute task (Non-blocking); returns Task ID |
+| `execute_and_wait()` | name, *args, worker, timeout | Any | Execute task (Blocking); returns Result |
+| `get_result()` | task_id, wait, timeout | tuple | Retrieve results and poll count |
+| `sig()` | task, *args, worker | Sig | Create signature for Canvas operations |
+| `group()` | signatures | List | Parallel execution and result collection |
+| `chain()` | signatures | Any | Sequential pipeline; passing results forward |
+| `chord()` | header_sigs, callback_sig | Any | Parallel map followed by reduction callback |
+| `list_tasks()` | worker | List[str] | List tasks on a specific worker |
+| `stats()` | - | str | Print Master node network/packet stats |
+| `reset_stats()` | - | None | Reset communication statistics on Master |
+| `get_system_info()` | worker | str | Get worker health (CPU, Temp, RAM) |
+| `upload_file()` | filename, code, worker | str | Transfer raw data to worker filesystem |
+| `upload_python_as_task()` | name, code, worker | str | Upload .py file and register result function |
+| `remove_task()` | name, worker | str | Purge task from RAM and disk |
+| `clear_all_tasks()` | worker | str | Clear all registered tasks on a worker |
+| `broadcast_action()` | action_type, num_workers | List | Perform cluster-wide operations |
+| `reconfig()` | module, worker | str | Command FPGA reconfiguration (Beta) |
 
 ---
 
 ## Version History
+
+### v3.0 (May 7, 2026)
+- ✓ Port to PYNQ-Z2 with most key functions preserved
+- ✓ Introduction of partial reconfiguration and sample firmware (currently via serial)
+- ✓ Rework of repo for easier development and maintenance
 
 ### v2.0 (Feb 4, 2026)
 - ✓ Multi-worker support (2 workers)
