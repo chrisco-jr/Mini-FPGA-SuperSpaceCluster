@@ -1,7 +1,7 @@
 # Broccoli PYNQ-Z2 Cluster - Complete API Reference
 
-**Version**: 1.0 (Multi-Worker)  
-**Date**: April 24, 2026  
+**Version**: 3.0 (Multi-Worker)  
+**Date**: May 7, 2026  
 **Hardware**: PYNQ-Z2 Master + 2x PYNQ-Z2 Workers
 
 ---
@@ -9,14 +9,13 @@
 ## Table of Contents
 
 1. [Quick Start](#quick-start)
-2. [Serial Commands (Master)](#serial-commands-master)
+2. [Serial Commands (Master Interface)](#serial-commands-master)
 3. [Python Client API](#python-client-api)
-4. [Canvas Primitives](#canvas-primitives)
-5. [GPIO Operations](#gpio-operations)
-6. [System Monitoring](#system-monitoring)
-7. [Peripheral Control](#peripheral-control)
-8. [File Operations](#file-operations)
-9. [Advanced Examples](#advanced-examples)
+4. [Orchestration & Canvas Primitives](#canvas-primitives)
+5. [Advanced File & Script Management](#advanced-file--task-management)
+6. [Cluster Utility & Telemetry](#utility--telemetry)
+7. [FPGA Reconfiguration (Beta)](#fpga-reconfiguration)
+8. [Complete API Summary Tables](#complete-api-summary)
 
 ---
 
